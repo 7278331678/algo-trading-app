@@ -178,3 +178,17 @@ def test_load_has_unique_columns(monkeypatch):
     df = study.runner.add_exit_times(df, MarketClock())
     dataset.relabel(df, "daily_0.4x0.6")      # the step that failed on real data
     assert df["ret_long"].notna().any()
+
+
+def test_one_decision_per_day_mode():
+    from datetime import time
+
+    df = synthetic_market(n_sym=4, days=330, seed=9)
+    res = study.run_study(df, MarketClock(), BacktestConfig(capital=100_000), barrier="daily_0.6x1.2",
+                          cost=dataset.CostModel(slippage_bps_per_side=2.0), kinds=("logit",),
+                          decision_times=[time(9, 45)])
+    assert res["decision_times"] == ["09:45:00"]
+    preds = res["_frames"]["predictions"]
+    assert (preds["ts"].dt.strftime("%H:%M") == "09:40").all()     # candle 09:40-09:45 only
+    h = res["chosen_on_holdout"]
+    assert h is not None and h["trades"] > 0 and h["trades_per_day"] <= 4

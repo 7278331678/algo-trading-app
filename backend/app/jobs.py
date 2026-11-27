@@ -263,7 +263,9 @@ def main(argv: list[str] | None = None) -> int:
     bt.add_argument("--symbols", nargs="+", default=None)
     bt.add_argument("--slippage-bps", type=float, default=5.0)
     tm = sub.add_parser("train-models")
-    tm.add_argument("--barrier", default="daily_0.4x0.6", choices=["daily_0.4x0.6", "atr5_1.0x1.5"])
+    tm.add_argument("--barrier", default="daily_0.4x0.6", choices=["daily_0.4x0.6", "daily_0.6x1.2", "atr5_1.0x1.5"])
+    tm.add_argument("--decision-times", nargs="+", default=None,
+                    help="HH:MM candle-close times to decide at, e.g. 09:45 (default: every candle)")
     tm.add_argument("--slippage-bps", type=float, default=3.0, help="per side, also used in the cost-aware target")
     tm.add_argument("--models", nargs="+", default=["hgb", "logit"], choices=["hgb", "logit"])
     tm.add_argument("--max-train-rows", type=int, default=600_000)
@@ -362,7 +364,11 @@ def main(argv: list[str] | None = None) -> int:
                               daily_loss_cap_pct=settings.daily_loss_cap_pct)
         cost = dataset.CostModel(slippage_bps_per_side=args.slippage_bps)
         kinds = tuple(args.models)
-        result = study.run_study(df, clock, base, args.barrier, cost, kinds, max_train_rows=args.max_train_rows)
+        from datetime import time as dtime
+
+        dts = [dtime.fromisoformat(t) for t in args.decision_times] if args.decision_times else None
+        result = study.run_study(df, clock, base, args.barrier, cost, kinds, max_train_rows=args.max_train_rows,
+                                 decision_times=dts)
         final = walkforward.fit_final(result["_df"], study.build.ALL_FEATURES, result["_mask"], kinds,
                                       args.max_train_rows)
         run_id = clock.now().strftime("%Y%m%d-%H%M%S")

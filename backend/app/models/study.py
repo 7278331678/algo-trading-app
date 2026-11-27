@@ -49,7 +49,10 @@ def _bt(frame: pd.DataFrame, cfg: BacktestConfig, model: str, thr: float) -> dic
 
 def run_study(df: pd.DataFrame, clock, base: BacktestConfig, barrier: str = "daily_0.4x0.6",
               cost: dataset.CostModel | None = None, kinds: tuple[str, ...] = ("hgb", "logit"),
-              thresholds: list[float] | None = None, max_train_rows: int = 600_000) -> dict:
+              thresholds: list[float] | None = None, max_train_rows: int = 600_000,
+              decision_times: list | None = None) -> dict:
+    """decision_times: if given (e.g. [time(9, 45)]), models train and trade only on candles closing at
+    those times: one decision per stock per day instead of one per 5-minute candle."""
     cost = cost or dataset.CostModel()
     thresholds = thresholds or THRESHOLDS
     df = runner.add_exit_times(df, clock)
@@ -59,8 +62,18 @@ def run_study(df: pd.DataFrame, clock, base: BacktestConfig, barrier: str = "dai
     log.info("dataset: %d rows, %d trainable, long win rate after costs %.3f", len(df), int(mask.sum()),
              float(df.loc[mask, "t_long"].mean()))
 
-    preds, fold_metrics = walkforward.run_walkforward(df, build.ALL_FEATURES, mask, kinds, max_train_rows)
-    test = df.loc[preds.index].join(preds)
+    if decision_times:
+        at = df["decision_time"].dt.time.isin(set(decision_times))
+        sub = df[at]
+        preds, fold_metrics = walkforward.run_walkforward(sub, build.ALL_FEATURES, mask[at], kinds, max_train_rows,
+                                                          min_train_rows=300)
+        # backtests need every candle of the test quarters (to manage trades); predictions only at decision times
+        pq = set(pd.PeriodIndex(pd.to_datetime(df.loc[preds.index, "day"]), freq="Q"))
+        in_test = pd.PeriodIndex(pd.to_datetime(df["day"]), freq="Q").isin(pq)
+        test = df[in_test].join(preds)
+    else:
+        preds, fold_metrics = walkforward.run_walkforward(df, build.ALL_FEATURES, mask, kinds, max_train_rows)
+        test = df.loc[preds.index].join(preds)
     test["bad_day"] = regime.bad_day_flag(test)
     # backtests only need these columns (avoids copying ~60 columns x millions of rows per run)
     keep = ["ts", "day", "symbol", "open", "high", "low", "close", "atr14", "daily_atr_pct", "exit_time",
@@ -98,6 +111,7 @@ def run_study(df: pd.DataFrame, clock, base: BacktestConfig, barrier: str = "dai
             verdict = "weak_positive"
     return {
         "barrier": barrier, "cost_round_trip_pct": round(cost.round_trip * 100, 4),
+        "decision_times": [str(t) for t in decision_times] if decision_times else "every candle",
         "rows": int(len(df)), "trainable_rows": int(mask.sum()),
         "base_win_rate_after_costs": {s: round(float(df.loc[mask, f"t_{s}"].mean()), 4) for s in ("long", "short")},
         "selection_quarters": [str(q) for q in sorted(sel_q)], "holdout_quarters": [str(q) for q in sorted(hold_q)],
@@ -107,7 +121,7 @@ def run_study(df: pd.DataFrame, clock, base: BacktestConfig, barrier: str = "dai
         "holdout": [brief(r) for r in hold_results],
         "chosen_on_holdout": brief(chosen_hold) if chosen_hold else None,
         "verdict": verdict,
-        "_frames": {"predictions": test[["symbol", "ts", *[c for c in preds.columns]]],
+        "_frames": {"predictions": test.loc[test[preds.columns[0]].notna(), ["symbol", "ts", *preds.columns]],
                     "chosen_holdout": chosen_hold},
         "_df": df, "_mask": mask, "_config": cfg,
     }

@@ -18,6 +18,7 @@ from app.features import build, labels
 BARRIERS = {
     "atr5_1.0x1.5": ("atr5", 1.0, 1.5, 1.0),
     "daily_0.4x0.6": ("daily", 0.4, 1.5, 1.0),   # stop 0.4 x daily ATR, target 0.6 x daily ATR
+    "daily_0.6x1.2": ("daily", 0.6, 2.0, 1.0),   # stop 0.6 x daily ATR, target 1.2 x daily ATR (bigger moves)
 }
 
 META = ["ts", "decision_time", "day", "symbol", "sector_index", "open", "high", "low", "close",

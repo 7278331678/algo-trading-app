@@ -26,10 +26,11 @@ log = logging.getLogger(__name__)
 SIDES = ("long", "short")
 
 
-def make_model(kind: str, seed: int = 7):
+def make_model(kind: str, seed: int = 7, n_rows: int = 1_000_000):
     if kind == "hgb":   # histogram gradient boosting (the LightGBM algorithm family), handles NaN natively
+        leaf = int(min(500, max(50, n_rows // 200)))   # smaller datasets (one decision a day) need smaller leaves
         return HistGradientBoostingClassifier(max_iter=200, learning_rate=0.05, max_leaf_nodes=31,
-                                              min_samples_leaf=500, l2_regularization=1.0,
+                                              min_samples_leaf=leaf, l2_regularization=1.0,
                                               early_stopping=False, random_state=seed)
     if kind == "logit":  # simple, robust baseline
         return make_pipeline(SimpleImputer(strategy="median"), StandardScaler(),
@@ -58,7 +59,7 @@ def fit_calibrated(kind: str, X: np.ndarray, y: np.ndarray, ts: np.ndarray, max_
         fit_idx = np.sort(rng.choice(fit_idx, max_rows, replace=False))
     if len(cal_idx) > max_rows // 3:
         cal_idx = np.sort(rng.choice(cal_idx, max_rows // 3, replace=False))
-    model = make_model(kind, seed)
+    model = make_model(kind, seed, len(fit_idx))
     model.fit(X[fit_idx], y[fit_idx])
     iso = None
     if len(np.unique(y[cal_idx])) == 2:
@@ -87,7 +88,8 @@ def fold_metrics(y: np.ndarray, p: np.ndarray) -> dict:
 
 def run_walkforward(df: pd.DataFrame, features: list[str], train_mask: pd.Series,
                     kinds: tuple[str, ...] = ("hgb", "logit"), max_train_rows: int = 600_000,
-                    min_train_quarters: int = 2, seed: int = 7) -> tuple[pd.DataFrame, list[dict]]:
+                    min_train_quarters: int = 2, seed: int = 7,
+                    min_train_rows: int = 10_000) -> tuple[pd.DataFrame, list[dict]]:
     """Returns out-of-sample predictions (rows of the test quarters) and per-fold metrics."""
     quarter = pd.PeriodIndex(pd.to_datetime(df["day"]), freq="Q")
     X_all = df[features].to_numpy(dtype=np.float32)
@@ -97,7 +99,7 @@ def run_walkforward(df: pd.DataFrame, features: list[str], train_mask: pd.Series
     for q in quarter_folds(df["day"], min_train_quarters):
         train = (quarter < q) & train_mask.to_numpy()
         test = (quarter == q) & df["ret_long"].notna().to_numpy()
-        if train.sum() < 10_000 or test.sum() == 0:
+        if train.sum() < min_train_rows or test.sum() == 0:
             continue
         out = pd.DataFrame(index=df.index[test])
         for side in SIDES:
