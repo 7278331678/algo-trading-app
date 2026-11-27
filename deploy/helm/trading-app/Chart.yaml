@@ -1,0 +1,6 @@
+apiVersion: v2
+name: trading-app
+description: Multi-agent intraday trading system (local and AWS)
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

@@ -1,0 +1,12 @@
+{
+  "_comment": "Weekday NSE equity-segment trading holidays. Copy each year from the official NSE circular (nseindia.com > Resources > Exchange Communication > Holidays). The app refuses to trade in a year that is missing here. 2026 lists only the holidays still ahead as of 27 Nov 2026; past dates do not matter because historical candles already skip them.",
+  "years": {
+    "2026": {
+      "source": "NSE circular: trading holidays for calendar year 2026",
+      "holidays": [
+        {"date": "2026-12-25", "name": "Christmas"}
+      ],
+      "special_sessions": []
+    }
+  }
+}

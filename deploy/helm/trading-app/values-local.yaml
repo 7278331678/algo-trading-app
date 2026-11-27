@@ -1,0 +1,16 @@
+# Docker Desktop Kubernetes. LoadBalancer services appear on localhost.
+backend:
+  image:
+    pullPolicy: Never      # image is built locally by start-local.ps1
+  service:
+    type: LoadBalancer     # http://localhost:8100
+    port: 8100             # 8000 is often taken by other local apps
+minio:
+  service:
+    type: LoadBalancer     # console: http://localhost:9001
+mlflow:
+  service:
+    type: LoadBalancer     # http://localhost:5000
+mailhog:
+  service:
+    type: LoadBalancer     # inbox: http://localhost:8025

@@ -1,0 +1,35 @@
+# secrets
+.env
+*.pem
+*.key
+
+# python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+
+# node
+node_modules/
+dist/
+
+# data and models (kept in Postgres / MinIO / MLflow, never in git)
+/data/
+*.parquet
+*.pkl
+mlruns/
+
+# terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+_to_delete/

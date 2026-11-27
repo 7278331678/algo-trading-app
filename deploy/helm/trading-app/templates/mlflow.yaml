@@ -1,0 +1,54 @@
+{{- if .Values.mlflow.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: mlflow-data
+  labels: {{- include "trading.labels" . | nindent 4 }}
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources: { requests: { storage: {{ .Values.mlflow.storage }} } }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mlflow
+  labels: {{- include "trading.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.mlflow.service.type }}
+  selector: { app: mlflow }
+  ports: [{ port: 5000, targetPort: 5000 }]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mlflow
+  labels: {{- include "trading.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  strategy: { type: Recreate }
+  selector: { matchLabels: { app: mlflow } }
+  template:
+    metadata:
+      labels: { app: mlflow }
+    spec:
+      enableServiceLinks: false  # no auto *_PORT=tcp://... env vars
+      containers:
+        - name: mlflow
+          image: {{ .Values.mlflow.image }}
+          command: ["mlflow", "server"]
+          args:
+            - --host=0.0.0.0
+            - --port=5000
+            - --backend-store-uri=sqlite:////mlflow/mlflow.db
+            - --artifacts-destination=/mlflow/artifacts
+            - --serve-artifacts
+          ports: [{ containerPort: 5000 }]
+          readinessProbe:
+            httpGet: { path: /health, port: 5000 }
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          volumeMounts: [{ name: data, mountPath: /mlflow }]
+      volumes:
+        - name: data
+          persistentVolumeClaim: { claimName: mlflow-data }
+{{- end }}

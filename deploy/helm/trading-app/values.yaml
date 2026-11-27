@@ -1,0 +1,58 @@
+# Defaults shared by every environment. Override per environment with
+# values-local.yaml (Docker Desktop) or values-aws.yaml (Phase 9).
+
+# Kubernetes secret holding everything from .env (created by start-local.ps1)
+secretName: trading-app-secrets
+
+backend:
+  image:
+    repository: trading-backend
+    tag: local
+    pullPolicy: IfNotPresent
+  replicas: 1
+  port: 8000
+  service:
+    type: ClusterIP
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits: { cpu: "1", memory: 1Gi }
+
+postgres:
+  enabled: true
+  image: pgvector/pgvector:pg16
+  database: trading
+  user: trading
+  storage: 10Gi
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits: { cpu: "1", memory: 1Gi }
+
+redis:
+  enabled: true
+  image: redis:7.2-alpine
+  resources:
+    requests: { cpu: 50m, memory: 64Mi }
+    limits: { cpu: 500m, memory: 256Mi }
+
+minio:
+  enabled: true
+  # Official minio/minio images are no longer published (repo archived Apr 2026).
+  # pgsty/minio is a maintained drop-in fork: same args, env vars and API.
+  image: pgsty/minio:latest
+  storage: 20Gi
+  bucket: trading-app
+  service:
+    type: ClusterIP
+
+mlflow:
+  enabled: true
+  image: ghcr.io/mlflow/mlflow:v2.16.2
+  storage: 5Gi
+  service:
+    type: ClusterIP
+
+mailhog:
+  enabled: true
+  image: mailhog/mailhog:v1.0.1
+  service:
+    type: ClusterIP
