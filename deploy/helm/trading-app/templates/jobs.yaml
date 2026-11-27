@@ -40,5 +40,5 @@ spec:
               {{- include "trading.backendEnv" $ | nindent 14 }}
               resources:
                 requests: { cpu: 100m, memory: 256Mi }
-                limits: { cpu: "1", memory: 1Gi }
+                limits: { cpu: "1", memory: {{ $job.memory | default "1Gi" }} }
 {{- end }}

@@ -6,6 +6,7 @@
   daily-update    fetch today's candles, purge old data, run quality checks (16:05 on trading days)
   purge           delete candles older than the retention windows
   quality-check   check stored candles and block stocks with bad data
+  build-features  indicators, market context and labels for every stock -> Parquet (after daily-update)
 
 Exit codes: 0 ok/skipped, 1 failed, 2 Zerodha login needed, 3 another run is in progress.
 """
@@ -250,6 +251,8 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("purge")
     qc = sub.add_parser("quality-check")
     qc.add_argument("--days", type=int, default=None, help="only check the last N days")
+    bfe = sub.add_parser("build-features")
+    bfe.add_argument("--symbols", nargs="+", help="limit to these trading symbols")
     args = p.parse_args(argv)
     clock = MarketClock()
 
@@ -292,8 +295,25 @@ def main(argv: list[str] | None = None) -> int:
     def quality_check(settings, engine, run):
         run.stats = step_quality(settings, engine, run.id, clock, clock.now(), days=args.days)
 
+    def build_features(settings, engine, run):
+        from app.features.pipeline import build_universe_features
+        from app.providers.storage import ObjectStore
+
+        # never build while today's candles are still being written
+        for _ in range(60):
+            with advisory_lock(engine, "job:daily-update") as free:
+                if free:
+                    break
+            log.info("daily-update is running; waiting")
+            time.sleep(30)
+        store_ = ObjectStore(settings)
+        store_.ensure_bucket()
+        run.stats = build_universe_features(settings, engine, clock, store_.put_bytes,
+                                            set(args.symbols) if args.symbols else None)
+        return "partial" if run.stats["skipped"] else "ok"
+
     handlers = {"universe-sync": universe_sync, "backfill": backfill, "daily-update": daily_update,
-                "purge": purge, "quality-check": quality_check}
+                "purge": purge, "quality-check": quality_check, "build-features": build_features}
     return _run(args.cmd, handlers[args.cmd])
 
 

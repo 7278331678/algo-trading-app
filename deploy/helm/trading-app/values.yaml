@@ -67,6 +67,11 @@ jobs:
     schedule: "15 8 * * 0"
     args: ["universe-sync"]
     deadlineSeconds: 1800
+  build-features:          # indicators + labels -> Parquet in MinIO/S3 (waits for daily-update)
+    schedule: "20 17 * * 1-5"
+    args: ["build-features"]
+    deadlineSeconds: 7200
+    memory: 3Gi
   backfill:                # template only: started by backfill.bat
     schedule: "0 0 1 1 *"
     suspend: true

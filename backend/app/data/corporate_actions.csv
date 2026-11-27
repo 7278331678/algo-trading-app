@@ -1,0 +1,15 @@
+# Days whose prices are distorted by corporate actions (demergers, splits, bonuses) or that are
+# listing days. Feature rows on these days and the following sessions are excluded from training.
+# Kite adjusts history for splits/bonuses but not for demergers, so demergers must be listed here.
+# Price jumps found by the quality check are added automatically at build time.
+# Seeded from the data-quality findings of 27 Nov 2026 (special pre-open sessions in the data).
+date,symbol,type,note
+2025-01-06,ITC,demerger,ITC Hotels demerger ex-date (special pre-open session)
+2025-04-07,SIEMENS,demerger,Siemens Energy demerger ex-date (-35% open)
+2025-06-19,ENRIN,listing,first trading day after demerger
+2025-10-13,TATACAP,listing,IPO listing day
+2025-10-14,TMPV,demerger,Tata Motors demerger (special pre-open session)
+2025-11-12,TMCV,listing,first trading day after demerger
+2025-12-05,HINDUNILVR,demerger,demerger ex-date (special pre-open session)
+2026-04-30,VEDL,demerger,Vedanta demerger ex-date (-29% open)
+2026-06-15,VAML,listing,first trading day after demerger

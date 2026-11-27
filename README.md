@@ -4,7 +4,7 @@ Multi-agent AI intraday trading system for a Zerodha account: Nifty 100 universe
 6-gate signal pipeline, paper and live modes, local (Docker Desktop Kubernetes)
 and cloud (AWS) deployment.
 
-**Status: Phase 1 (data layer).** Paper mode only. No strategy code yet.
+**Status: Phase 2 (features and labels).** Paper mode only. No trading strategy yet.
 
 ## Quick start (Windows, local mode)
 
@@ -52,6 +52,26 @@ https://www.niftyindices.com/IndexConstituent/ind_nifty100list.csv in your brows
 Backtests use point-in-time index membership. Fill `backend/app/data/universe_history.csv`
 with past index changes (NSE rebalancing press releases) to remove survivorship bias; until then
 the first sync assumes today's members were members for the whole data window.
+
+## Features and labels (Phase 2)
+
+`build-features` runs at 17:20 Mon-Fri (after `daily-update`) and writes one Parquet file per stock to
+MinIO/S3 under `features/v1/5minute/`, plus `features/v1/manifest.json`. Run it by hand with:
+
+```
+kubectl -n trading create job build-features-manual --from=cronjob/build-features
+kubectl -n trading logs -f job/build-features-manual
+```
+
+- 38 features per 5-minute candle: the stock's own indicators, 15-minute trend, previous-session levels,
+  Nifty/sector/VIX context and market breadth. Every value uses only data available when the candle closed
+  (checked by truncation tests).
+- Labels: entry at the next candle's open, target 1.5 x ATR, stop 1 x ATR, closed at our square-off time.
+  Long and short, gross of costs.
+- Rows to leave out of training are marked `exclude` (warm-up, corporate actions in
+  `backend/app/data/corporate_actions.csv` plus detected price jumps, special sessions);
+  `in_universe` marks days the stock was in the Nifty 100.
+- Summary: http://localhost:8100/data/features
 
 ## Layout
 

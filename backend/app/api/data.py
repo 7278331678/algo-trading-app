@@ -76,3 +76,20 @@ def quality_issues(limit: int = Query(100, le=1000), severity: str | None = None
             " ORDER BY q.severity, q.day DESC NULLS FIRST LIMIT :lim"
         ), {"sev": severity, "lim": limit}).mappings().all()
     return {"count": len(rows), "issues": [dict(r) for r in rows]}
+
+
+@router.get("/features")
+def features_manifest() -> dict:
+    """Summary of the last feature build (from the manifest in object storage)."""
+    import json
+
+    from app.features.build import FEATURE_VERSION
+    from app.providers.storage import ObjectStore
+
+    try:
+        raw = ObjectStore(get_settings()).get_bytes(f"features/{FEATURE_VERSION}/manifest.json")
+    except Exception as exc:  # noqa: BLE001
+        return {"built": False, "detail": f"no feature build yet ({exc.__class__.__name__})"}
+    m = json.loads(raw)
+    m["stats"] = {k: v for k, v in m["stats"].items() if k != "per_symbol"}
+    return {"built": True, **m}
