@@ -1,0 +1,44 @@
+{{- /*
+Batch jobs on the backend image. Schedules are in IST (timeZone needs Kubernetes 1.27+).
+"backfill" is a suspended CronJob used only as a template: backfill.bat creates a Job from it.
+*/ -}}
+{{- range $name, $job := .Values.jobs }}
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ $name }}
+  labels: {{- include "trading.labels" $ | nindent 4 }}
+spec:
+  schedule: {{ $job.schedule | quote }}
+  timeZone: Asia/Kolkata
+  suspend: {{ $job.suspend | default false }}
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 3600
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: {{ $job.backoffLimit | default 1 }}
+      activeDeadlineSeconds: {{ $job.deadlineSeconds | default 7200 }}
+      ttlSecondsAfterFinished: 604800
+      template:
+        metadata:
+          labels: { app: {{ $name }}, component: batch }
+        spec:
+          restartPolicy: Never
+          enableServiceLinks: false
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 10001
+          containers:
+            - name: job
+              image: "{{ $.Values.backend.image.repository }}:{{ $.Values.backend.image.tag }}"
+              imagePullPolicy: {{ $.Values.backend.image.pullPolicy }}
+              command: ["python", "-m", "app.jobs"]
+              args: {{ toJson $job.args }}
+              {{- include "trading.backendEnv" $ | nindent 14 }}
+              resources:
+                requests: { cpu: 100m, memory: 256Mi }
+                limits: { cpu: "1", memory: 1Gi }
+{{- end }}

@@ -1,0 +1,32 @@
+{
+  "_comment": "Session rules by date. A period applies from its 'from' date until the next period starts. 'cas' = stocks under the Closing Auction Session (F&O stocks). Times are IST. our_square_off is OUR exit time and must stay before the broker's MIS auto square-off.",
+  "periods": [
+    {
+      "from": "2000-01-01",
+      "label": "pre-CAS",
+      "continuous_end": {"cas": "15:30", "non_cas": "15:30"},
+      "broker_mis_square_off": {"cas": "15:25", "non_cas": "15:25"},
+      "our_square_off": {"cas": "15:15", "non_cas": "15:15"},
+      "confirmed": true,
+      "source": "NSE regular session 09:15-15:30"
+    },
+    {
+      "from": "2026-08-03",
+      "label": "CAS phase 1 (15:15-15:35)",
+      "continuous_end": {"cas": "15:15", "non_cas": "15:30"},
+      "broker_mis_square_off": {"cas": "15:12", "non_cas": "15:25"},
+      "our_square_off": {"cas": "15:00", "non_cas": "15:15"},
+      "confirmed": true,
+      "source": "Zerodha Z-Connect CAS post (Jul 2026) and update of 16 Oct 2026 (MIS 3:12 PM for CAS stocks)"
+    },
+    {
+      "from": "2026-12-07",
+      "label": "CAS revised (15:30-15:40)",
+      "continuous_end": {"cas": "15:30", "non_cas": "15:30"},
+      "broker_mis_square_off": {"cas": "15:12", "non_cas": "15:25"},
+      "our_square_off": {"cas": "15:00", "non_cas": "15:15"},
+      "confirmed": false,
+      "source": "Kotak Neo summary of NSE circulars of 6 Nov 2026. CONFIRM continuous_end and Zerodha MIS timings before live trading after 7 Dec 2026."
+    }
+  ]
+}

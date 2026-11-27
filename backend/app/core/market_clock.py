@@ -13,6 +13,8 @@ from enum import StrEnum
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+from .sessions import SessionRules
+
 IST = ZoneInfo("Asia/Kolkata")
 
 DEFAULT_CALENDAR_PATH = Path(__file__).resolve().parent.parent / "data" / "nse_holidays.json"
@@ -31,8 +33,8 @@ class Phase(StrEnum):
     PRE_OPEN = "pre_open"            # 09:00-09:15
     OPENING_RANGE = "opening_range"  # 09:15-09:30, no new entries
     ENTRY_WINDOW = "entry_window"    # 09:30-14:30, new entries allowed
-    MANAGE_ONLY = "manage_only"      # 14:30-15:15, manage open trades only
-    SQUARE_OFF = "square_off"        # 15:15-15:30, flatten everything
+    MANAGE_ONLY = "manage_only"      # 14:30 to square-off, manage open trades only
+    SQUARE_OFF = "square_off"        # our square-off time (date-dependent) to 15:30: flatten everything
     POST_CLOSE = "post_close"        # after 15:30 on a trading day
 
 
@@ -42,8 +44,8 @@ class SessionTimes:
     market_open: time = time(9, 15)
     entry_start: time = time(9, 30)
     entry_end: time = time(14, 30)
-    square_off: time = time(15, 15)
     market_close: time = time(15, 30)
+    # square-off time is date-dependent (Closing Auction Session): see SessionRules
 
 
 @dataclass(frozen=True)
@@ -59,8 +61,10 @@ class MarketClock:
         self,
         calendar_path: Path | str = DEFAULT_CALENDAR_PATH,
         session: SessionTimes | None = None,
+        rules: SessionRules | None = None,
     ) -> None:
         self.session = session or SessionTimes()
+        self.rules = rules or SessionRules()
         self._holidays: dict[int, set[date]] = {}
         self._special: dict[date, SpecialSession] = {}
         self._load(Path(calendar_path))
@@ -124,7 +128,8 @@ class MarketClock:
             return Phase.OPENING_RANGE
         if t < s.entry_end:
             return Phase.ENTRY_WINDOW
-        if t < s.square_off:
+        # worst case across the universe: CAS (F&O) stocks square off earliest
+        if t < self.rules.square_off(at.date(), cas=True):
             return Phase.MANAGE_ONLY
         if t < s.market_close:
             return Phase.SQUARE_OFF
@@ -132,6 +137,10 @@ class MarketClock:
 
     def can_open_new_trades(self, at: datetime | None = None) -> bool:
         return self.phase(at) is Phase.ENTRY_WINDOW
+
+    def square_off_time(self, d: date, cas: bool = True) -> time:
+        """Our exit time for intraday positions on day d (before the broker's MIS square-off)."""
+        return self.rules.square_off(d, cas)
 
     def next_trading_day(self, d: date) -> date:
         nxt = d + timedelta(days=1)

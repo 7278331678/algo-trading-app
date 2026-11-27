@@ -67,6 +67,15 @@ class Settings(BaseSettings):
     email_from: str = "trading-app@localhost"
     email_to: str = ""
 
+    # Market data (Phase 1)
+    universe_index: str = "NIFTY 100"
+    universe_csv_url: str = "https://www.niftyindices.com/IndexConstituent/ind_nifty100list.csv"
+    kite_hist_rate_per_sec: float = Field(2.5, gt=0, le=3)  # Kite allows ~3 historical calls/sec
+    retention_minute_days: int = Field(90, ge=1)
+    retention_5minute_days: int = Field(730, ge=1)
+    retention_15minute_days: int = Field(730, ge=1)
+    retention_day_days: int = Field(1095, ge=1)
+
     # Risk defaults (overridable later from the dashboard)
     capital: float = Field(100_000, gt=0)
     risk_per_trade_pct: float = Field(0.5, gt=0, le=2)
@@ -91,6 +100,15 @@ class Settings(BaseSettings):
             f"postgresql+psycopg://{user}:{pwd}@{self.postgres_host}:{self.postgres_port}/"
             f"{quote_plus(self.postgres_db)}"
         )
+
+    @property
+    def retention_days(self) -> dict[str, int]:
+        return {
+            "minute": self.retention_minute_days,
+            "5minute": self.retention_5minute_days,
+            "15minute": self.retention_15minute_days,
+            "day": self.retention_day_days,
+        }
 
     @property
     def kite_configured(self) -> bool:

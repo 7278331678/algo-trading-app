@@ -42,6 +42,8 @@ def test_weekend_and_holiday(clock):
         (9, 30, Phase.ENTRY_WINDOW),
         (14, 29, Phase.ENTRY_WINDOW),
         (14, 30, Phase.MANAGE_ONLY),
+        (14, 59, Phase.MANAGE_ONLY),
+        (15, 0, Phase.SQUARE_OFF),   # CAS period: we exit by 15:00 (Zerodha MIS cut-off 15:12)
         (15, 15, Phase.SQUARE_OFF),
         (15, 31, Phase.POST_CLOSE),
     ],
@@ -89,3 +91,12 @@ def test_special_session(clock):
 
 def test_bundled_calendar_loads():
     MarketClock()  # the shipped JSON must parse
+
+
+def test_square_off_before_cas_started(tmp_path):
+    cal = {"years": {"2026": {"holidays": [], "special_sessions": []}}}
+    p = tmp_path / "c.json"
+    p.write_text(json.dumps(cal))
+    c = MarketClock(p)
+    assert c.phase(ist(2026, 7, 31, 15, 5)) is Phase.MANAGE_ONLY   # pre-CAS: exit at 15:15
+    assert c.phase(ist(2026, 8, 3, 15, 5)) is Phase.SQUARE_OFF     # CAS: exit at 15:00

@@ -4,7 +4,7 @@ Multi-agent AI intraday trading system for a Zerodha account: Nifty 100 universe
 6-gate signal pipeline, paper and live modes, local (Docker Desktop Kubernetes)
 and cloud (AWS) deployment.
 
-**Status: Phase 0 (foundation).** Paper mode only. No strategy code yet.
+**Status: Phase 1 (data layer).** Paper mode only. No strategy code yet.
 
 ## Quick start (Windows, local mode)
 
@@ -25,6 +25,33 @@ and cloud (AWS) deployment.
 | Mail inbox (MailHog) | http://localhost:8025 |
 
 `stop-local.bat` stops everything and keeps data. `reset-local.bat` deletes everything, including data.
+
+## Market data (Phase 1)
+
+1. Log in to Zerodha each morning: http://localhost:8100/auth/kite/login
+2. First time only, download history: double-click **`backfill.bat`** (about 10-20 minutes).
+   It is resumable: if it stops, run it again and it continues where it left off.
+   - only some stocks: `backfill.bat --symbols INFY TCS`
+   - only some intervals: `backfill.bat --intervals day 15minute`
+   - re-download after a split/bonus: `backfill.bat --refresh --symbols XYZ`
+3. After that it runs itself (Kubernetes CronJobs, IST):
+   - `daily-update` 16:05 Mon-Fri: today's candles, purge of old data, quality checks
+   - `universe-sync` 08:15 Sunday: Nifty 100 list, Kite tokens, sectors
+4. Check results: http://localhost:8100/data/status, `/data/universe`, `/data/quality`
+
+| Interval | Kept for |
+|---|---|
+| 1-min | 90 days |
+| 5-min, 15-min | 2 years |
+| daily | 3 years |
+
+If the NSE site blocks the automatic download of the Nifty 100 list, open
+https://www.niftyindices.com/IndexConstituent/ind_nifty100list.csv in your browser, save it as
+`backend/app/data/ind_nifty100list.csv`, and run `start-local.bat` again.
+
+Backtests use point-in-time index membership. Fill `backend/app/data/universe_history.csv`
+with past index changes (NSE rebalancing press releases) to remove survivorship bias; until then
+the first sync assumes today's members were members for the whole data window.
 
 ## Layout
 

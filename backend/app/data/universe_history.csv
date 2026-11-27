@@ -1,0 +1,5 @@
+# Past Nifty 100 membership spells, used to avoid survivorship bias in backtests.
+# Fill from NSE index-rebalancing press releases (twice a year). One row per spell.
+# valid_to empty = still a member (normally leave current members to the automatic sync).
+# Example: NIFTY 100,OLDCO,Old Company Ltd,Capital Goods,2024-03-28,2025-09-26
+index_name,symbol,company_name,industry,valid_from,valid_to

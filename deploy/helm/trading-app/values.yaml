@@ -56,3 +56,20 @@ mailhog:
   image: mailhog/mailhog:v1.0.1
   service:
     type: ClusterIP
+
+# Batch jobs (python -m app.jobs <args>). Schedules are IST.
+jobs:
+  daily-update:            # today's candles + purge + quality checks, trading days only
+    schedule: "5 16 * * 1-5"
+    args: ["daily-update"]
+    deadlineSeconds: 7200
+  universe-sync:           # refresh Nifty 100 list and Kite tokens
+    schedule: "15 8 * * 0"
+    args: ["universe-sync"]
+    deadlineSeconds: 1800
+  backfill:                # template only: started by backfill.bat
+    schedule: "0 0 1 1 *"
+    suspend: true
+    args: ["backfill"]
+    backoffLimit: 2        # resumable, so a retry continues where it stopped
+    deadlineSeconds: 14400
