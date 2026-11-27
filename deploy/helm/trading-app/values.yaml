@@ -72,6 +72,12 @@ jobs:
     args: ["build-features"]
     deadlineSeconds: 7200
     memory: 3Gi
+  backtest:                # template only: kubectl create job <name> --from=cronjob/backtest
+    schedule: "0 0 1 1 *"
+    suspend: true
+    args: ["backtest"]
+    deadlineSeconds: 14400
+    memory: 4Gi
   backfill:                # template only: started by backfill.bat
     schedule: "0 0 1 1 *"
     suspend: true

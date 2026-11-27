@@ -6,9 +6,12 @@ the way an exchange would, with configurable slippage.
 
 Fill rules (deliberately conservative):
 - MARKET: fills at the last price, worsened by slippage.
-- LIMIT: fills at the limit once the price trades through it; a marketable
-  limit fills at the last price (never worse than the limit).
-- SL-M: triggers when the price touches the trigger, then fills like MARKET.
+- LIMIT: a resting limit fills at its own price once the market trades at or
+  through it (fed candle highs/lows must not hand it a better price); a limit
+  that is marketable when placed fills at the last price.
+- SL-M: triggers when the price touches the trigger. If the price moved there
+  continuously it fills at the trigger (+ slippage); if it jumped past it (a gap,
+  continuous=False, e.g. a candle open) it fills at that price (+ slippage).
 - SL: triggers like SL-M, then behaves as a LIMIT at its price.
 """
 
@@ -83,14 +86,15 @@ class SimulatedBroker(Broker):
         elif (pos.quantity > 0) != (direction > 0):
             pos.average_price = price  # flipped: remainder opened at this price
 
-    def _try_execute(self, order: Order, price: float) -> None:
+    def _try_execute(self, order: Order, price: float, resting: bool = True, continuous: bool = False) -> None:
         req = order.request
         if order.status is OrderStatus.TRIGGER_PENDING:
             hit = price <= req.trigger_price if req.side is Side.SELL else price >= req.trigger_price
             if not hit:
                 return
             if req.order_type is OrderType.SL_M:
-                self._fill(order, self._slip(price, req.side))
+                ref = req.trigger_price if (continuous and resting) else price
+                self._fill(order, self._slip(ref, req.side))
                 return
             order.status = OrderStatus.OPEN  # SL becomes a resting limit
         if order.status is not OrderStatus.OPEN:
@@ -98,9 +102,9 @@ class SimulatedBroker(Broker):
         if req.order_type in (OrderType.MARKET, OrderType.SL_M):
             self._fill(order, self._slip(price, req.side))
         elif req.side is Side.BUY and price <= req.price:
-            self._fill(order, min(price, req.price))
+            self._fill(order, req.price if resting else price)
         elif req.side is Side.SELL and price >= req.price:
-            self._fill(order, max(price, req.price))
+            self._fill(order, req.price if resting else price)
 
     # -------------------------------------------------------------- Broker API
     def place_order(self, request: OrderRequest) -> Order:
@@ -126,7 +130,7 @@ class SimulatedBroker(Broker):
 
             last = self._last_price.get(request.symbol)
             if last is not None:
-                self._try_execute(order, last)
+                self._try_execute(order, last, resting=False)
             return order
 
     def cancel_order(self, order_id: str) -> Order:
@@ -157,8 +161,12 @@ class SimulatedBroker(Broker):
         return self._orders.get(oid) if oid else None
 
     # -------------------------------------------------------- simulation feed
-    def on_price(self, symbol: str, price: float, ts: datetime | None = None) -> list[Order]:
-        """Feed a new traded price; returns orders that filled on it."""
+    def on_price(self, symbol: str, price: float, ts: datetime | None = None,
+                 continuous: bool = False) -> list[Order]:
+        """Feed a new traded price; returns orders that filled on it.
+
+        continuous=True means the market moved here smoothly from the previous price (e.g. a
+        candle's low after its open), so a stop crossed on the way fills at its trigger."""
         if price <= 0:
             raise ValueError("price must be positive")
         with self._lock:
@@ -169,7 +177,7 @@ class SimulatedBroker(Broker):
             for order in self._orders.values():
                 if order.request.symbol != symbol or order.is_terminal:
                     continue
-                self._try_execute(order, price)
+                self._try_execute(order, price, resting=True, continuous=continuous)
                 if order.status is OrderStatus.COMPLETE:
                     filled.append(order)
             return filled

@@ -32,3 +32,9 @@ class ObjectStore:
 
     def get_bytes(self, key: str) -> bytes:
         return self.client.get_object(Bucket=self.bucket, Key=key)["Body"].read()
+
+    def list_keys(self, prefix: str) -> list[str]:
+        keys: list[str] = []
+        for page in self.client.get_paginator("list_objects_v2").paginate(Bucket=self.bucket, Prefix=prefix):
+            keys += [o["Key"] for o in page.get("Contents", [])]
+        return keys

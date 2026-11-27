@@ -1,5 +1,60 @@
-# Past Nifty 100 membership spells, used to avoid survivorship bias in backtests.
-# Fill from NSE index-rebalancing press releases (twice a year). One row per spell.
-# valid_to empty = still a member (normally leave current members to the automatic sync).
-# Example: NIFTY 100,OLDCO,Old Company Ltd,Capital Goods,2024-03-28,2025-09-26
+# Nifty 100 membership changes from NSE Indices semi-annual reviews (press releases of
+# 28 Feb 2024, 23 Aug 2024, 21 Feb 2025, 22 Aug 2025, 23 Feb 2026, 10 Aug 2026).
+# Closed spell (valid_to filled): a stock that was in the index for that period and is not now.
+# Open spell (valid_to empty): a current member that JOINED on valid_from (after the data start).
+# Members on the data start date (2023-11-28) that never left need no row.
+# Not covered: short-lived ad-hoc inclusions around demergers/renames between reviews.
 index_name,symbol,company_name,industry,valid_from,valid_to
+NIFTY 100,AWL,Adani Wilmar Ltd.,,2023-11-28,2024-03-27
+NIFTY 100,PIIND,PI Industries Ltd.,,2023-11-28,2024-03-27
+NIFTY 100,PGHH,Procter & Gamble Hygiene & Health Care Ltd.,,2023-11-28,2024-03-27
+NIFTY 100,UPL,UPL Ltd.,,2023-11-28,2024-03-27
+NIFTY 100,MUTHOOTFIN,Muthoot Finance Ltd.,,2023-11-28,2024-03-27
+NIFTY 100,BERGEPAINT,Berger Paints India Ltd.,,2023-11-28,2024-09-29
+NIFTY 100,COLPAL,Colgate Palmolive (India) Ltd.,,2023-11-28,2024-09-29
+NIFTY 100,MARICO,Marico Ltd.,,2023-11-28,2024-09-29
+NIFTY 100,SBICARD,SBI Cards and Payment Services Ltd.,,2023-11-28,2024-09-29
+NIFTY 100,SRF,SRF Ltd.,,2023-11-28,2024-09-29
+NIFTY 100,ATGL,Adani Total Gas Ltd.,,2023-11-28,2025-03-27
+NIFTY 100,IRCTC,Indian Railway Catering and Tourism Corporation Ltd.,,2023-11-28,2025-03-27
+NIFTY 100,BHEL,Bharat Heavy Electricals Ltd.,,2024-09-30,2025-03-27
+NIFTY 100,NHPC,NHPC Ltd.,,2024-09-30,2025-03-27
+NIFTY 100,UNIONBANK,Union Bank of India,,2024-09-30,2025-03-27
+NIFTY 100,DABUR,Dabur India Ltd.,,2023-11-28,2025-09-29
+NIFTY 100,HEROMOTOCO,Hero MotoCorp Ltd.,,2023-11-28,2025-09-29
+NIFTY 100,ICICIPRULI,ICICI Prudential Life Insurance Company Ltd.,,2023-11-28,2025-09-29
+NIFTY 100,INDUSINDBK,IndusInd Bank Ltd.,,2023-11-28,2025-09-29
+NIFTY 100,SWIGGY,Swiggy Ltd.,,2025-03-28,2025-09-29
+NIFTY 100,BAJAJHFL,Bajaj Housing Finance Ltd.,,2025-03-28,2026-03-29
+NIFTY 100,HAVELLS,Havells India Ltd.,,2023-11-28,2026-03-29
+NIFTY 100,ICICIGI,ICICI Lombard General Insurance Company Ltd.,,2023-11-28,2026-03-29
+NIFTY 100,NAUKRI,Info Edge (India) Ltd.,,2023-11-28,2026-03-29
+NIFTY 100,LICI,Life Insurance Corporation of India,,2023-11-28,2026-03-29
+NIFTY 100,JSWENERGY,JSW Energy Ltd.,,2024-09-30,2026-03-29
+NIFTY 100,INDHOTEL,Indian Hotels Co. Ltd.,,2025-03-28,2026-09-29
+NIFTY 100,LODHA,Lodha Developers Ltd.,,2024-09-30,2026-09-29
+NIFTY 100,RECLTD,REC Ltd.,,2024-03-28,2026-09-29
+NIFTY 100,SHREECEM,Shree Cement Ltd.,,2023-11-28,2026-09-29
+NIFTY 100,UNITDSPR,United Spirits Ltd.,,2023-11-28,2026-09-29
+NIFTY 100,ADANIPOWER,Adani Power Ltd.,,2024-03-28,
+NIFTY 100,IRFC,Indian Railway Finance Corporation Ltd.,,2024-03-28,
+NIFTY 100,JIOFIN,Jio Financial Services Ltd.,,2024-03-28,
+NIFTY 100,PFC,Power Finance Corporation Ltd.,,2024-03-28,
+NIFTY 100,CGPOWER,CG Power and Industrial Solutions Ltd.,,2025-03-28,
+NIFTY 100,HYUNDAI,Hyundai Motor India Ltd.,,2025-03-28,
+NIFTY 100,HINDZINC,Hindustan Zinc Ltd.,,2025-09-30,
+NIFTY 100,MAXHEALTH,Max Healthcare Institute Ltd.,,2025-09-30,
+NIFTY 100,MAZDOCK,Mazagoan Dock Shipbuilders Ltd.,,2025-09-30,
+NIFTY 100,ENRIN,Siemens Energy India Ltd.,,2025-09-30,
+NIFTY 100,SOLARINDS,Solar Industries India Ltd.,,2025-09-30,
+NIFTY 100,CUMMINSIND,Cummins India Ltd.,,2026-03-30,
+NIFTY 100,HDFCAMC,HDFC Asset Management Company Ltd.,,2026-03-30,
+NIFTY 100,MUTHOOTFIN,Muthoot Finance Ltd.,,2026-03-30,
+NIFTY 100,TATACAP,Tata Capital Ltd.,,2026-03-30,
+NIFTY 100,TMCV,Tata Motors Ltd.,,2026-03-30,
+NIFTY 100,UNIONBANK,Union Bank of India,,2026-03-30,
+NIFTY 100,BSE,BSE Ltd.,,2026-09-30,
+NIFTY 100,POWERINDIA,Hitachi Energy India Ltd.,,2026-09-30,
+NIFTY 100,POLYCAB,Polycab India Ltd.,,2026-09-30,
+NIFTY 100,VAML,Vedanta Aluminium Metal Ltd.,,2026-09-30,
+NIFTY 100,IDEA,Vodafone Idea Ltd.,,2026-09-30,

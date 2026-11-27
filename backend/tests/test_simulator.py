@@ -44,7 +44,7 @@ def test_limit_buy_waits_for_price(broker):
     broker.on_price("INFY", 1505)
     assert o.status is OrderStatus.OPEN
     broker.on_price("INFY", 1499)
-    assert o.status is OrderStatus.COMPLETE and o.average_price == 1499
+    assert o.status is OrderStatus.COMPLETE and o.average_price == 1500  # resting limit fills at its price
 
 
 def test_marketable_limit_fills_at_last_price(broker):
@@ -118,3 +118,20 @@ def test_max_order_value_rejects(broker):
 def test_invalid_requests(broker, kwargs):
     with pytest.raises(ValueError):
         broker.place_order(req(**kwargs))
+
+
+def test_stop_fills_at_trigger_when_crossed_continuously(broker):
+    broker.on_price("INFY", 1500)
+    broker.place_order(req(qty=10))
+    sl = broker.place_order(req(side=Side.SELL, qty=10, otype=OrderType.SL_M, trigger=1490))
+    broker.on_price("INFY", 1480, continuous=True)   # candle low well below the stop
+    assert sl.average_price == 1490
+
+
+def test_stop_fills_at_gap_price():
+    b = SimulatedBroker(slippage_bps=0)
+    b.on_price("INFY", 1500)
+    b.place_order(req(qty=10))
+    sl = b.place_order(req(side=Side.SELL, qty=10, otype=OrderType.SL_M, trigger=1490))
+    b.on_price("INFY", 1470, continuous=False)       # next candle opens below the stop
+    assert sl.average_price == 1470

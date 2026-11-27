@@ -7,6 +7,7 @@
   purge           delete candles older than the retention windows
   quality-check   check stored candles and block stocks with bad data
   build-features  indicators, market context and labels for every stock -> Parquet (after daily-update)
+  backtest        run strategies x stop/target settings on the features, save results
 
 Exit codes: 0 ok/skipped, 1 failed, 2 Zerodha login needed, 3 another run is in progress.
 """
@@ -253,6 +254,13 @@ def main(argv: list[str] | None = None) -> int:
     qc.add_argument("--days", type=int, default=None, help="only check the last N days")
     bfe = sub.add_parser("build-features")
     bfe.add_argument("--symbols", nargs="+", help="limit to these trading symbols")
+    bt = sub.add_parser("backtest")
+    bt.add_argument("--strategies", nargs="+", default=["rules", "random"])
+    bt.add_argument("--barriers", nargs="+", default=None, help="names from BARRIER_GRID (default: all)")
+    bt.add_argument("--start", type=date.fromisoformat, default=None)
+    bt.add_argument("--end", type=date.fromisoformat, default=None)
+    bt.add_argument("--symbols", nargs="+", default=None)
+    bt.add_argument("--slippage-bps", type=float, default=5.0)
     args = p.parse_args(argv)
     clock = MarketClock()
 
@@ -312,8 +320,32 @@ def main(argv: list[str] | None = None) -> int:
                                             set(args.symbols) if args.symbols else None)
         return "partial" if run.stats["skipped"] else "ok"
 
+    def backtest(settings, engine, run):
+        from app.backtest import runner, strategies
+        from app.backtest.engine import BacktestConfig
+        from app.providers.storage import ObjectStore
+
+        store_ = ObjectStore(settings)
+        df = runner.load_features(store_.list_keys, store_.get_bytes, args.start, args.end,
+                                  set(args.symbols) if args.symbols else None)
+        df = runner.add_exit_times(df, clock)
+        grid = [g for g in strategies.BARRIER_GRID if not args.barriers or g[0] in args.barriers]
+        base = BacktestConfig(capital=settings.capital, risk_pct=settings.risk_per_trade_pct,
+                              max_trades_per_day=settings.max_trades_per_day,
+                              daily_loss_cap_pct=settings.daily_loss_cap_pct, slippage_bps=args.slippage_bps)
+        results = runner.run_study(df, base, args.strategies, grid)
+        run_id = clock.now().strftime("%Y%m%d-%H%M%S")
+        period = {"start": str(df["day"].min()), "end": str(df["day"].max()), "symbols": int(df["symbol"].nunique())}
+        runner.save_results(engine, store_.put_bytes, run_id, results, period)
+        run.stats = {"run_id": run_id, **period,
+                     "results": {r["name"]: {k: r["summary"].get(k) for k in
+                                             ("trades", "net_pnl", "gross_before_costs", "cost_per_trade",
+                                              "profit_factor", "win_rate", "max_drawdown_pct",
+                                              "profitable_quarters", "would_halt_on")} for r in results}}
+
     handlers = {"universe-sync": universe_sync, "backfill": backfill, "daily-update": daily_update,
-                "purge": purge, "quality-check": quality_check, "build-features": build_features}
+                "purge": purge, "quality-check": quality_check, "build-features": build_features,
+                "backtest": backtest}
     return _run(args.cmd, handlers[args.cmd])
 
 

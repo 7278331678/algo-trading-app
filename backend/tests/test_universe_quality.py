@@ -149,3 +149,19 @@ def test_listing_day_not_checked():
     d1, d2 = date(2026, 11, 24), date(2026, 11, 25)
     rows = session(d1, n=15) + session(d2)   # first day opened late after the listing auction
     assert quality.check_completeness(rows, "15minute", {d1, d2}) == []
+
+
+def test_history_seed_is_consistent():
+    rows = universe.load_history_seed()
+    assert len(rows) >= 50
+    by_sym = {}
+    for r in rows:
+        assert r["valid_to"] is None or r["valid_to"] >= r["valid_from"]
+        by_sym.setdefault(r["symbol"], []).append(r)
+    for sym, spells in by_sym.items():   # no overlapping spells for one stock
+        spells.sort(key=lambda r: r["valid_from"])
+        for a, b in zip(spells, spells[1:], strict=False):
+            assert a["valid_to"] is not None and a["valid_to"] < b["valid_from"], sym
+    # round trips we know about
+    assert [r["valid_to"] is None for r in sorted(by_sym["UNIONBANK"], key=lambda r: r["valid_from"])] == [False, True]
+    assert [r["valid_to"] is None for r in sorted(by_sym["MUTHOOTFIN"], key=lambda r: r["valid_from"])] == [False, True]

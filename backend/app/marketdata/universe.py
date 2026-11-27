@@ -206,8 +206,13 @@ def sync_universe(engine, index_name: str, constituents: list[Constituent],
     stats = {"added": [], "removed": [], "kept": 0, "missing_tokens": [], "sector_fallbacks": []}
 
     with engine.begin() as conn:
-        # seed past spells once (source = 'seed'); they never overlap open spells we create
-        for s in load_history_seed():
+        # seed past spells once (source = 'seed'). A seed row WITHOUT valid_to is a current member
+        # that joined on valid_from: it corrects the start of that member's open spell instead.
+        seeds = load_history_seed()
+        joined = {s["symbol"]: s["valid_from"] for s in seeds if s["index_name"] == index_name and not s["valid_to"]}
+        for s in seeds:
+            if not s["valid_to"]:
+                continue
             exists = conn.execute(
                 text("SELECT 1 FROM universe_members WHERE index_name=:i AND symbol=:s AND valid_from=:f"),
                 {"i": s["index_name"], "s": s["symbol"], "f": s["valid_from"]},
@@ -268,6 +273,19 @@ def sync_universe(engine, index_name: str, constituents: list[Constituent],
                     ),
                     params,
                 )
+        # current members that joined after the data start: their membership starts when they joined
+        fixed = []
+        for sym, since in joined.items():
+            if sym in current:
+                n = conn.execute(
+                    text("UPDATE universe_members SET valid_from=:f WHERE index_name=:i AND symbol=:s"
+                         " AND valid_to IS NULL AND valid_from <> :f"),
+                    {"f": since, "i": index_name, "s": sym},
+                ).rowcount
+                if n:
+                    fixed.append(sym)
+        stats["join_dates_applied"] = sorted(fixed)
+        stats["joined_but_not_current"] = sorted(set(joined) - set(current))
     stats.update(added=sorted(added), removed=sorted(removed), kept=len(kept))
     return stats
 

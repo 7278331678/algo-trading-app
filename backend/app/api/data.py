@@ -93,3 +93,30 @@ def features_manifest() -> dict:
     m = json.loads(raw)
     m["stats"] = {k: v for k, v in m["stats"].items() if k != "per_symbol"}
     return {"built": True, **m}
+
+
+@router.get("/backtests")
+def backtests(limit: int = Query(20, le=200)) -> dict:
+    from sqlalchemy import text
+
+    with get_engine().connect() as conn:
+        rows = conn.execute(text(
+            "SELECT id, run_id, created_at, name, summary->>'trades' AS trades, summary->>'net_pnl' AS net_pnl,"
+            " summary->>'profit_factor' AS profit_factor, summary->>'win_rate' AS win_rate,"
+            " summary->>'max_drawdown_pct' AS max_drawdown_pct, summary->>'profitable_quarters' AS profitable_quarters,"
+            " summary->>'gross_before_costs' AS gross_before_costs, summary->>'cost_per_trade' AS cost_per_trade,"
+            " summary->>'would_halt_on' AS would_halt_on"
+            " FROM backtest_runs ORDER BY created_at DESC, id LIMIT :l"), {"l": limit}).mappings().all()
+    return {"count": len(rows), "runs": [dict(r) for r in rows]}
+
+
+@router.get("/backtests/{run_pk}")
+def backtest_detail(run_pk: int) -> dict:
+    from fastapi import HTTPException
+    from sqlalchemy import text
+
+    with get_engine().connect() as conn:
+        row = conn.execute(text("SELECT * FROM backtest_runs WHERE id = :i"), {"i": run_pk}).mappings().first()
+    if not row:
+        raise HTTPException(404, "backtest not found")
+    return dict(row)

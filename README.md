@@ -4,7 +4,7 @@ Multi-agent AI intraday trading system for a Zerodha account: Nifty 100 universe
 6-gate signal pipeline, paper and live modes, local (Docker Desktop Kubernetes)
 and cloud (AWS) deployment.
 
-**Status: Phase 2 (features and labels).** Paper mode only. No trading strategy yet.
+**Status: Phase 3 (backtester).** Paper mode only.
 
 ## Quick start (Windows, local mode)
 
@@ -72,6 +72,19 @@ kubectl -n trading logs -f job/build-features-manual
   `backend/app/data/corporate_actions.csv` plus detected price jumps, special sessions);
   `in_universe` marks days the stock was in the Nifty 100.
 - Summary: http://localhost:8100/data/features
+
+## Backtests (Phase 3)
+
+```
+kubectl -n trading create job bt-1 --from=cronjob/backtest
+kubectl -n trading logs -f job/bt-1
+```
+
+Runs the rules baseline (opening-range breakout + VWAP + 15-min trend + volume + ADX) and a random
+baseline, each with 4 stop/target settings, over the stored features, through the broker simulator:
+next-candle-open entries, stop-loss and target orders, square-off at our exit time, Zerodha charges and
+slippage on every trade. Results: http://localhost:8100/data/backtests (and `/data/backtests/<id>` for
+per-quarter detail); trades and daily equity are saved in MinIO under `backtests/<run_id>/`.
 
 ## Layout
 
