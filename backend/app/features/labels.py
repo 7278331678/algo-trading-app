@@ -61,9 +61,10 @@ def _side(o, h, lo, c, entry, atr, tm, sm, valid, last, long: bool):
 
 def triple_barrier(df: pd.DataFrame, exit_time: dict, entry_start: time = time(9, 30),
                    entry_end: time = time(14, 30), target_mult: float = 1.5, stop_mult: float = 1.0,
-                   minutes: int = 5) -> pd.DataFrame:
-    """df: sorted 5-minute frame with ts (IST), day, open/high/low/close and atr14.
-    exit_time: {day: time} when open trades are closed that day (our square-off)."""
+                   minutes: int = 5, unit_col: str = "atr14") -> pd.DataFrame:
+    """df: sorted 5-minute frame with ts (IST), day, open/high/low/close and the barrier unit column.
+    exit_time: {day: time} when open trades are closed that day (our square-off).
+    unit_col: rupee distance of one barrier unit (default the 5-min ATR; any column can be used)."""
     out = pd.DataFrame(np.nan, index=df.index, columns=LABEL_COLUMNS)
     for day, g in df.groupby("day", sort=False):
         ex = exit_time.get(day)
@@ -71,7 +72,7 @@ def triple_barrier(df: pd.DataFrame, exit_time: dict, entry_start: time = time(9
             continue
         idx = g.index.to_numpy()
         o, h, lo, c = (g[col].to_numpy(dtype=float) for col in ("open", "high", "low", "close"))
-        atr = g["atr14"].to_numpy(dtype=float)
+        atr = g[unit_col].to_numpy(dtype=float)
         end_t = (g["ts"] + pd.Timedelta(minutes=minutes)).dt.time.to_numpy()
         tradable = np.array([e <= ex for e in end_t])     # candles that finish by the exit time
         if not tradable.any():

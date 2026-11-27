@@ -8,6 +8,7 @@
   quality-check   check stored candles and block stocks with bad data
   build-features  indicators, market context and labels for every stock -> Parquet (after daily-update)
   backtest        run strategies x stop/target settings on the features, save results
+  train-models    walk-forward models, threshold chosen on early quarters, judged on later ones
 
 Exit codes: 0 ok/skipped, 1 failed, 2 Zerodha login needed, 3 another run is in progress.
 """
@@ -261,6 +262,12 @@ def main(argv: list[str] | None = None) -> int:
     bt.add_argument("--end", type=date.fromisoformat, default=None)
     bt.add_argument("--symbols", nargs="+", default=None)
     bt.add_argument("--slippage-bps", type=float, default=5.0)
+    tm = sub.add_parser("train-models")
+    tm.add_argument("--barrier", default="daily_0.4x0.6", choices=["daily_0.4x0.6", "atr5_1.0x1.5"])
+    tm.add_argument("--slippage-bps", type=float, default=3.0, help="per side, also used in the cost-aware target")
+    tm.add_argument("--models", nargs="+", default=["hgb", "logit"], choices=["hgb", "logit"])
+    tm.add_argument("--max-train-rows", type=int, default=600_000)
+    tm.add_argument("--symbols", nargs="+", default=None)
     args = p.parse_args(argv)
     clock = MarketClock()
 
@@ -343,9 +350,32 @@ def main(argv: list[str] | None = None) -> int:
                                               "profit_factor", "win_rate", "max_drawdown_pct",
                                               "profitable_quarters", "would_halt_on")} for r in results}}
 
+    def train_models(settings, engine, run):
+        from app.backtest.engine import BacktestConfig
+        from app.models import dataset, study, walkforward
+        from app.providers.storage import ObjectStore
+
+        store_ = ObjectStore(settings)
+        df = dataset.load(store_.list_keys, store_.get_bytes, set(args.symbols) if args.symbols else None)
+        base = BacktestConfig(capital=settings.capital, risk_pct=settings.risk_per_trade_pct,
+                              max_trades_per_day=settings.max_trades_per_day,
+                              daily_loss_cap_pct=settings.daily_loss_cap_pct)
+        cost = dataset.CostModel(slippage_bps_per_side=args.slippage_bps)
+        kinds = tuple(args.models)
+        result = study.run_study(df, clock, base, args.barrier, cost, kinds, max_train_rows=args.max_train_rows)
+        final = walkforward.fit_final(result["_df"], study.build.ALL_FEATURES, result["_mask"], kinds,
+                                      args.max_train_rows)
+        run_id = clock.now().strftime("%Y%m%d-%H%M%S")
+        pk = study.save(engine, store_.put_bytes, run_id, result, final, kinds)
+        run.stats = {"model_run_id": pk, "run_id": run_id, "verdict": result["verdict"],
+                     "base_win_rate_after_costs": result["base_win_rate_after_costs"],
+                     "chosen": result["chosen"], "chosen_on_holdout": result["chosen_on_holdout"],
+                     "auc_ensemble": {m["quarter"] + "/" + m["side"]: m["auc"] for m in result["fold_metrics"]
+                                      if m["model"] == "ensemble"}}
+
     handlers = {"universe-sync": universe_sync, "backfill": backfill, "daily-update": daily_update,
                 "purge": purge, "quality-check": quality_check, "build-features": build_features,
-                "backtest": backtest}
+                "backtest": backtest, "train-models": train_models}
     return _run(args.cmd, handlers[args.cmd])
 
 

@@ -142,14 +142,41 @@ def _run_day(day, dframe: pd.DataFrame, cfg: BacktestConfig) -> list[Trade]:
         done.append(tr)
         open_trades.pop(tr.symbol, None)
 
-    for ts, g in dframe.groupby("ts", sort=True):
+    # plain arrays for speed: the inner loop runs for every candle of every day
+    sym_a = dframe["symbol"].to_numpy()
+    ts_a = dframe["ts"].to_numpy()
+    o_a, h_a = dframe["open"].to_numpy(float), dframe["high"].to_numpy(float)
+    l_a, c_a = dframe["low"].to_numpy(float), dframe["close"].to_numpy(float)
+    atr_a, datr_a = dframe["atr14"].to_numpy(float), dframe["daily_atr_pct"].to_numpy(float)
+    ex_a = dframe["exit_time"].to_numpy()
+    sig_a, score_a = dframe["signal"].to_numpy(), dframe["score"].to_numpy(float)
+    ts_list = list(dframe["ts"])
+    bounds = np.flatnonzero(np.r_[True, ts_a[1:] != ts_a[:-1], True])
+
+    class Row:  # the fields the logic below reads, for one stock at one candle
+        __slots__ = ("symbol", "open", "high", "low", "close", "atr14", "daily_atr_pct", "exit_time",
+                     "signal", "score")
+
+        def __init__(self, i):
+            self.symbol, self.open, self.high, self.low, self.close = sym_a[i], o_a[i], h_a[i], l_a[i], c_a[i]
+            self.atr14, self.daily_atr_pct, self.exit_time = atr_a[i], datr_a[i], ex_a[i]
+            self.signal, self.score = sig_a[i], score_a[i]
+
+    for bi in range(len(bounds) - 1):
+        a, b = bounds[bi], bounds[bi + 1]
+        ts = ts_list[a]
         bar_end = ts + step
         active = set(pending) | set(open_trades)
-        has_signal = g["signal"].to_numpy() != 0
-        if not active and not has_signal.any():
+        sig_idx = a + np.flatnonzero(sig_a[a:b] != 0)
+        if not active and len(sig_idx) == 0:
             continue
-        sub = g[has_signal | g["symbol"].isin(active).to_numpy()]
-        rows = {r.symbol: r for r in sub.itertuples(index=False)}
+        rows = {}
+        if active:
+            for i in range(a, b):
+                if sym_a[i] in active:
+                    rows[sym_a[i]] = Row(i)
+        for i in sig_idx:
+            rows.setdefault(sym_a[i], Row(i))
 
         # 1. move every stock that has a pending entry or an open trade through this candle
         for sym in list(pending) + list(open_trades):
@@ -210,8 +237,8 @@ def _run_day(day, dframe: pd.DataFrame, cfg: BacktestConfig) -> list[Trade]:
             continue
         if realised <= -loss_cap or len(traded_symbols) >= cfg.max_trades_per_day:
             continue
-        cands = sub[sub["signal"] != 0].sort_values("score", ascending=False)
-        for r in cands.itertuples(index=False):
+        cands = sorted((rows[sym_a[i]] for i in sig_idx), key=lambda r: -r.score)
+        for r in cands:
             if len(traded_symbols) >= cfg.max_trades_per_day:
                 break
             if r.symbol in traded_symbols or dec >= r.exit_time:

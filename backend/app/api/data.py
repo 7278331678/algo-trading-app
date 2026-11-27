@@ -120,3 +120,28 @@ def backtest_detail(run_pk: int) -> dict:
     if not row:
         raise HTTPException(404, "backtest not found")
     return dict(row)
+
+
+@router.get("/models")
+def model_runs(limit: int = Query(10, le=100)) -> dict:
+    from sqlalchemy import text
+
+    with get_engine().connect() as conn:
+        rows = conn.execute(text(
+            "SELECT id, run_id, created_at, barrier, verdict, status, chosen, chosen_on_holdout,"
+            " summary->'base_win_rate_after_costs' AS base_win_rate_after_costs,"
+            " summary->'holdout_quarters' AS holdout_quarters"
+            " FROM model_runs ORDER BY created_at DESC LIMIT :l"), {"l": limit}).mappings().all()
+    return {"count": len(rows), "runs": [dict(r) for r in rows]}
+
+
+@router.get("/models/{run_pk}")
+def model_run_detail(run_pk: int) -> dict:
+    from fastapi import HTTPException
+    from sqlalchemy import text
+
+    with get_engine().connect() as conn:
+        row = conn.execute(text("SELECT * FROM model_runs WHERE id = :i"), {"i": run_pk}).mappings().first()
+    if not row:
+        raise HTTPException(404, "model run not found")
+    return dict(row)

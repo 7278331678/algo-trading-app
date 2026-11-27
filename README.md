@@ -4,7 +4,7 @@ Multi-agent AI intraday trading system for a Zerodha account: Nifty 100 universe
 6-gate signal pipeline, paper and live modes, local (Docker Desktop Kubernetes)
 and cloud (AWS) deployment.
 
-**Status: Phase 3 (backtester).** Paper mode only.
+**Status: Phase 4 (models).** Paper mode only.
 
 ## Quick start (Windows, local mode)
 
@@ -85,6 +85,25 @@ baseline, each with 4 stop/target settings, over the stored features, through th
 next-candle-open entries, stop-loss and target orders, square-off at our exit time, Zerodha charges and
 slippage on every trade. Results: http://localhost:8100/data/backtests (and `/data/backtests/<id>` for
 per-quarter detail); trades and daily equity are saved in MinIO under `backtests/<run_id>/`.
+
+## Models (Phase 4)
+
+```
+kubectl -n trading create job tm-1 --from=cronjob/train-models
+kubectl -n trading logs -f job/tm-1
+```
+
+1. Relabels the features with the chosen barrier (default: stop 0.4 x daily ATR, target 0.6 x daily ATR).
+2. Cost-aware target: a trade is a win only if its return beats the round-trip cost (charges + slippage).
+3. Walk-forward by quarter: gradient boosting (scikit-learn HistGradientBoosting, the LightGBM algorithm
+   family) and logistic regression, plus their average; probabilities calibrated on the most recent part of
+   each training window. Every prediction comes from a model trained only on earlier quarters.
+4. Bad-day gate: Nifty down >1% from the open, VIX up >8%, or breadth <30% -> longs only, stricter threshold.
+5. Threshold and model are chosen on the first half of the out-of-sample quarters and judged on the second
+   half (untouched). Verdict: `no_edge`, `weak_positive` or `edge_candidate`.
+6. Final models (trained on all history), predictions and a manifest go to MinIO under `models/<run_id>/`.
+
+Results: http://localhost:8100/data/models
 
 ## Layout
 

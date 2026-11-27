@@ -38,7 +38,10 @@ spec:
               command: ["python", "-m", "app.jobs"]
               args: {{ toJson $job.args }}
               {{- include "trading.backendEnv" $ | nindent 14 }}
+                # math libraries must use as many threads as the pod has CPUs, not the host's core count
+                - { name: OMP_NUM_THREADS, value: {{ $job.cpu | default 1 | quote }} }
+                - { name: OPENBLAS_NUM_THREADS, value: {{ $job.cpu | default 1 | quote }} }
               resources:
                 requests: { cpu: 100m, memory: 256Mi }
-                limits: { cpu: "1", memory: {{ $job.memory | default "1Gi" }} }
+                limits: { cpu: {{ $job.cpu | default 1 | quote }}, memory: {{ $job.memory | default "1Gi" }} }
 {{- end }}

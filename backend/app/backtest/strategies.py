@@ -55,3 +55,27 @@ BARRIER_GRID = [
     ("daily_0.25x0.375", "daily", 0.25, 0.375),
     ("daily_0.4x0.6", "daily", 0.4, 0.6),
 ]
+
+
+def model_strategy(df: pd.DataFrame, threshold: float, model: str = "ensemble", bad_day_extra: float = 0.10,
+                   allow_short: bool = True) -> pd.DataFrame:
+    """Trade only when the model's calibrated probability of beating costs is high enough.
+
+    Needs p_long_<model>/p_short_<model> (or p_long/p_short for the ensemble) and bad_day.
+    Normal day: long if p_long >= threshold and p_long >= p_short; short mirrored.
+    Bad day (restricted mode): longs only, with relative strength > 0 and threshold + bad_day_extra.
+    score = probability margin over the threshold (most confident first).
+    """
+    out = df.copy()
+    suffix = "" if model == "ensemble" else f"_{model}"
+    pl, ps = df[f"p_long{suffix}"], df[f"p_short{suffix}"]
+    tradable = _tradable(df) & pl.notna()
+    bad = df["bad_day"].astype(bool)
+    long_ = tradable & (pl >= threshold) & (pl >= ps) & ~bad
+    long_bad = tradable & bad & (pl >= threshold + bad_day_extra) & (df["rel_strength"] > 0)
+    short = tradable & (ps >= threshold) & (ps > pl) & ~bad
+    if not allow_short:
+        short &= False
+    out["signal"] = np.select([long_ | long_bad, short], [1, -1], 0)
+    out["score"] = np.where(out["signal"] == 1, pl - threshold, np.where(out["signal"] == -1, ps - threshold, 0.0))
+    return out
