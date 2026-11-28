@@ -110,6 +110,9 @@ def forward_eval(df: pd.DataFrame, clock, base: BacktestConfig, models: dict, ma
     dts = [time.fromisoformat(t) for t in spec.get("decision_times") or []] or None
     kinds = tuple(spec.get("kinds") or manifest.get("kinds") or ("hgb", "logit"))
     cost = dataset.CostModel(slippage_bps_per_side=float(spec.get("slippage_bps", 3.0)))
+    missing = [f for f in manifest["features"] if f not in part.columns]
+    if missing:
+        raise RuntimeError(f"model needs features this run did not build: {missing[:5]}")
     part = runner.add_exit_times(part, clock)
     part = score(part, models, manifest["features"], kinds, dts)
     part["bad_day"] = regime.bad_day_flag(part)

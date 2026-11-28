@@ -1,0 +1,29 @@
+{{- if .Values.eventsPoller.enabled }}
+# Polls NSE's official announcements RSS about once a minute (the feed only holds the latest few items).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: events-poller
+  labels: {{- include "trading.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  strategy: { type: Recreate }       # never two pollers at once
+  selector: { matchLabels: { app: events-poller } }
+  template:
+    metadata:
+      labels: { app: events-poller }
+    spec:
+      enableServiceLinks: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+      containers:
+        - name: poller
+          image: "{{ .Values.backend.image.repository }}:{{ .Values.backend.image.tag }}"
+          imagePullPolicy: {{ .Values.backend.image.pullPolicy }}
+          command: ["python", "-m", "app.jobs", "events-poll"]
+          {{- include "trading.backendEnv" . | nindent 10 }}
+          resources:
+            requests: { cpu: 20m, memory: 128Mi }
+            limits: { cpu: 500m, memory: 512Mi }
+{{- end }}

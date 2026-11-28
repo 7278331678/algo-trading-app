@@ -11,6 +11,10 @@
   train-models    walk-forward models, threshold chosen on early quarters, judged on later ones
   weekly-retrain  score shadow/champion models on unseen days, promote/retire, train a new candidate
   signal-check    plant a known edge in the real data and confirm the pipeline finds it (and ignores noise)
+  events-backfill NSE website API (currently blocked by NSE: kept for if it reopens; use the RSS poller)
+  events-update   same API, last few days
+  events-poll     long-running: polls NSE's official announcements RSS about once a minute
+  events-import   load NSE announcement CSV exports dropped in object storage (imports/announcements/)
 
 Exit codes: 0 ok/skipped, 1 failed, 2 Zerodha login needed, 3 another run is in progress.
 """
@@ -124,7 +128,23 @@ def step_fetch(settings: Settings, engine, kite, intervals: list[str], now: date
 
 
 def step_purge(settings: Settings, engine) -> dict:
-    return store.purge_older_than(engine, settings.retention_days)
+    from app.events import store as events_store
+
+    out = store.purge_older_than(engine, settings.retention_days)
+    out["events"] = events_store.purge(engine, settings.retention_5minute_days)
+    return out
+
+
+def step_events(settings: Settings, engine, start: date, end: date, symbols: set[str] | None = None,
+                kinds: tuple[str, ...] = ("announcements", "board_meetings")) -> dict:
+    from app.events import nse
+    from app.events import store as events_store
+
+    syms = events_store.universe_symbols(engine, settings.universe_index, start)
+    if symbols:
+        syms = [s for s in syms if s in symbols] or sorted(symbols)
+    session = nse.NseSession(rate_per_sec=settings.nse_rate_per_sec)
+    return events_store.fetch_events(engine, session.get_json, syms, start, end, kinds)
 
 
 def step_quality(settings: Settings, engine, run_id: int, clock: MarketClock, now: datetime,
@@ -241,6 +261,48 @@ def _run(job: str, fn) -> int:
             return 1
 
 
+def events_poll_loop(once: bool, clock: MarketClock) -> int:
+    from sqlalchemy import text
+
+    from app.events import rss
+
+    settings = get_settings()
+    setup_logging(settings.log_level)
+    engine = _engine(settings)
+    migrate(engine)
+    with advisory_lock(engine, "job:events-poll") as got:
+        if not got:
+            log.error("events-poll is already running; exiting")
+            return 3
+        refreshed = None
+        universe: set[str] = set()
+        by_name: dict[str, str] = {}
+        polls = errors = 0
+        while True:
+            now = clock.now()
+            if refreshed is None or (now - refreshed).total_seconds() > 3600:
+                since = now.date() - timedelta(days=settings.retention_5minute_days)
+                with engine.connect() as conn:
+                    rows = conn.execute(text(
+                        "SELECT DISTINCT symbol, company_name FROM universe_members WHERE index_name = :i"
+                        " AND (valid_to IS NULL OR valid_to >= :d)"),
+                        {"i": settings.universe_index, "d": since}).all()
+                universe = {r[0] for r in rows}
+                by_name = rss.name_index({r[1]: r[0] for r in rows if r[1]})
+                refreshed = now
+            try:
+                st = rss.poll_once(engine, rss.fetch, universe, by_name)
+                polls += 1
+                if st["kept"] or st["gap"] or polls % 60 == 1:
+                    log.info("rss poll %d: %s", polls, st)
+            except Exception as exc:  # noqa: BLE001 - keep polling through network blips
+                errors += 1
+                log.warning("rss poll failed (%d so far): %s: %s", errors, exc.__class__.__name__, exc)
+            if once:
+                return 0
+            time.sleep(rss.poll_interval(clock.now()))
+
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="python -m app.jobs", description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -273,6 +335,18 @@ def main(argv: list[str] | None = None) -> int:
         sp.add_argument("--models", nargs="+", default=["hgb", "logit"], choices=["hgb", "logit"])
         sp.add_argument("--max-train-rows", type=int, default=600_000)
         sp.add_argument("--symbols", nargs="+", default=None)
+        sp.add_argument("--with-events", action="store_true", help="add Phase 5 corporate-event features")
+
+    eb = sub.add_parser("events-backfill")
+    eb.add_argument("--days", type=int, default=None, help="how far back (default: the 5-minute retention)")
+    eb.add_argument("--symbols", nargs="+", default=None)
+    eb.add_argument("--kinds", nargs="+", default=["announcements", "board_meetings"],
+                    choices=["announcements", "board_meetings"])
+    sub.add_parser("events-import")
+    ep = sub.add_parser("events-poll")
+    ep.add_argument("--once", action="store_true", help="poll one time and exit")
+    eu = sub.add_parser("events-update")
+    eu.add_argument("--days", type=int, default=5)
 
     model_args(sub.add_parser("train-models"))
     model_args(sub.add_parser("weekly-retrain", help="review shadows/champion on unseen days, then train a candidate"),
@@ -282,6 +356,9 @@ def main(argv: list[str] | None = None) -> int:
     sc.add_argument("--strengths", nargs="+", type=float, default=None)
     args = p.parse_args(argv)
     clock = MarketClock()
+
+    if args.cmd == "events-poll":
+        return events_poll_loop(args.once, clock)
 
     if args.cmd == "migrate":
         settings = get_settings()
@@ -315,6 +392,29 @@ def main(argv: list[str] | None = None) -> int:
         run.stats["purge"] = step_purge(settings, engine)
         run.stats["quality"] = step_quality(settings, engine, run.id, clock, now, days=7)
         return "partial" if run.stats["fetch"]["failures"] else "ok"
+
+    def events_backfill(settings, engine, run):
+        today = clock.now().date()
+        days = args.days or settings.retention_5minute_days
+        run.stats = step_events(settings, engine, today - timedelta(days=days), today,
+                                set(args.symbols) if args.symbols else None, tuple(args.kinds))
+        return "partial" if run.stats["failures"] else "ok"
+
+    def events_import(settings, engine, run):
+        from app.events import importer
+        from app.providers.storage import ObjectStore
+
+        store_ = ObjectStore(settings)
+        store_.ensure_bucket()
+        run.stats = importer.import_all(engine, store_.list_keys, store_.get_bytes, store_.move)
+        if not run.stats["files"]:
+            log.warning("no CSV files under %s in bucket %s", importer.PREFIX, settings.s3_bucket)
+            return "skipped"
+
+    def events_update(settings, engine, run):
+        today = clock.now().date()
+        run.stats = step_events(settings, engine, today - timedelta(days=args.days), today)
+        return "partial" if run.stats["failures"] else "ok"
 
     def purge(settings, engine, run):
         run.stats = step_purge(settings, engine)
@@ -362,7 +462,7 @@ def main(argv: list[str] | None = None) -> int:
                                               "profit_factor", "win_rate", "max_drawdown_pct",
                                               "profitable_quarters", "would_halt_on")} for r in results}}
 
-    def model_setup(settings):
+    def model_setup(settings, engine=None, events: bool = False):
         from datetime import time as dtime
 
         from app.backtest.engine import BacktestConfig
@@ -378,15 +478,36 @@ def main(argv: list[str] | None = None) -> int:
         dts = [dtime.fromisoformat(t) for t in args.decision_times] if args.decision_times else None
         spec = {"barrier": args.barrier, "decision_times": [t.strftime("%H:%M") for t in dts] if dts else None,
                 "slippage_bps": args.slippage_bps, "kinds": list(args.models), "max_train_rows": args.max_train_rows,
-                "symbols": args.symbols}
+                "symbols": args.symbols, "with_events": bool(args.with_events)}
+        if events or args.with_events:
+            from app.events import features as ev_features
+            from app.events import store as events_store
+
+            ann, bm = events_store.load(engine, min(df["day"]))
+            if args.with_events and ann.empty:
+                raise RuntimeError("no announcements stored: run events-backfill first")
+            if args.with_events:
+                # only stocks and days we really have news for; elsewhere "no news" would mean "no data"
+                keep = events_store.covered(engine, df)
+                if not keep.any():
+                    raise RuntimeError("no imported announcement coverage: run events-import first")
+                log.info("event coverage: %d of %d rows, %d stocks", int(keep.sum()), len(df),
+                         df.loc[keep, "symbol"].nunique())
+                df = df[keep].reset_index(drop=True)
+            ev_features.add_features(df, ann, bm)
+            log.info("event features: %d announcements, %d results meetings, %.1f%% of rows had material news",
+                     len(ann), int(bm["is_results"].sum()) if len(bm) else 0,
+                     100 * float((df["ev_material_since_close"] > 0).mean()))
         return store_, df, base, cost, dts, spec
 
     def train_and_save(settings, engine, store_, df, base, cost, dts, spec) -> dict:
+        from app.events.features import EVENT_FEATURES
         from app.models import study, tracking, walkforward
 
         kinds = tuple(spec["kinds"])
+        features = study.build.ALL_FEATURES + (EVENT_FEATURES if spec.get("with_events") else [])
         result = study.run_study(df, clock, base, spec["barrier"], cost, kinds,
-                                 max_train_rows=spec["max_train_rows"], decision_times=dts)
+                                 max_train_rows=spec["max_train_rows"], decision_times=dts, features=features)
         final = walkforward.fit_final(result["_df"], result["_features"], result["_final_mask"], kinds,
                                       spec["max_train_rows"])
         run_id = clock.now().strftime("%Y%m%d-%H%M%S")
@@ -403,16 +524,23 @@ def main(argv: list[str] | None = None) -> int:
                 "base_win_rate_after_costs": result["base_win_rate_after_costs"],
                 "chosen": result["chosen"], "chosen_on_holdout": result["chosen_on_holdout"],
                 "auc_ensemble": {m["quarter"] + "/" + m["side"]: m["auc"] for m in result["fold_metrics"]
-                                 if m["model"] == "ensemble"}}
+                                 if m["model"] == "ensemble"},
+                "auc_on_news_rows": result.get("event_rows")}
 
     def train_models(settings, engine, run):
-        store_, df, base, cost, dts, spec = model_setup(settings)
+        store_, df, base, cost, dts, spec = model_setup(settings, engine)
         run.stats = train_and_save(settings, engine, store_, df, base, cost, dts, spec)
 
     def weekly_retrain(settings, engine, run):
+        # live models that were trained with event features need them to be scored
+        from sqlalchemy import text
+
         from app.models import registry
 
-        store_, df, base, cost, dts, spec = model_setup(settings)
+        with engine.connect() as conn:
+            need = bool(conn.execute(text("SELECT count(*) FROM model_runs WHERE status IN ('shadow', 'champion')"
+                                          " AND (spec->>'with_events')::boolean")).scalar())
+        store_, df, base, cost, dts, spec = model_setup(settings, engine, events=need)
         run.stats["review"] = registry.weekly_review(engine, store_.get_bytes, df, clock, base)
         run.stats["candidate"] = train_and_save(settings, engine, store_, df, base, cost, dts, spec)
         status, why = registry.register_candidate(engine, run.stats["candidate"]["model_run_id"],
@@ -423,7 +551,7 @@ def main(argv: list[str] | None = None) -> int:
     def signal_check(settings, engine, run):
         from app.models import signal_check as sc
 
-        _, df, base, cost, dts, spec = model_setup(settings)
+        _, df, base, cost, dts, spec = model_setup(settings, engine)
         res = sc.run(df, clock, base, spec["barrier"], cost, tuple(spec["kinds"]), dts,
                      strengths=tuple(args.strengths) if args.strengths else sc.DEFAULT_STRENGTHS,
                      max_train_rows=spec["max_train_rows"])
@@ -433,7 +561,8 @@ def main(argv: list[str] | None = None) -> int:
     handlers = {"universe-sync": universe_sync, "backfill": backfill, "daily-update": daily_update,
                 "purge": purge, "quality-check": quality_check, "build-features": build_features,
                 "backtest": backtest, "train-models": train_models, "weekly-retrain": weekly_retrain,
-                "signal-check": signal_check}
+                "signal-check": signal_check, "events-backfill": events_backfill, "events-update": events_update,
+                "events-import": events_import}
     return _run(args.cmd, handlers[args.cmd])
 
 

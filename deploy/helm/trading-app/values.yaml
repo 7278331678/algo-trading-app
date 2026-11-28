@@ -51,6 +51,9 @@ mlflow:
   service:
     type: ClusterIP
 
+eventsPoller:
+  enabled: true
+
 mailhog:
   enabled: true
   image: mailhog/mailhog:v1.0.1
@@ -100,6 +103,12 @@ jobs:
     deadlineSeconds: 21600
     memory: 8Gi
     cpu: 4
+  events-import:           # template only: run-job.bat events-import (NSE CSV exports dropped in MinIO)
+    schedule: "0 0 1 1 *"
+    suspend: true
+    args: ["events-import"]
+    deadlineSeconds: 3600
+    memory: 1Gi
   backfill:                # template only: started by backfill.bat
     schedule: "0 0 1 1 *"
     suspend: true

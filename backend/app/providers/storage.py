@@ -38,3 +38,7 @@ class ObjectStore:
         for page in self.client.get_paginator("list_objects_v2").paginate(Bucket=self.bucket, Prefix=prefix):
             keys += [o["Key"] for o in page.get("Contents", [])]
         return keys
+
+    def move(self, src: str, dst: str) -> None:
+        self.client.copy_object(Bucket=self.bucket, Key=dst, CopySource={"Bucket": self.bucket, "Key": src})
+        self.client.delete_object(Bucket=self.bucket, Key=src)

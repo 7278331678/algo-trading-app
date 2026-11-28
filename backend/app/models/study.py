@@ -93,6 +93,7 @@ def run_study(df: pd.DataFrame, clock, base: BacktestConfig, barrier: str = "dai
             "exclude", "in_universe", "rel_strength", "bad_day", *preds.columns]
     test = test[keep]
 
+    event_rows = _event_row_metrics(df, preds, mask, kinds)
     quarters = sorted(pd.PeriodIndex(pd.to_datetime(test["day"]), freq="Q").unique())
     half = max(1, len(quarters) // 2)
     sel_q, hold_q = set(quarters[:half]), set(quarters[half:])
@@ -129,6 +130,7 @@ def run_study(df: pd.DataFrame, clock, base: BacktestConfig, barrier: str = "dai
         "base_win_rate_after_costs": {s: round(float(df.loc[mask, f"t_{s}"].mean()), 4) for s in ("long", "short")},
         "selection_quarters": [str(q) for q in sorted(sel_q)], "holdout_quarters": [str(q) for q in sorted(hold_q)],
         "fold_metrics": fold_metrics,
+        "event_rows": event_rows,
         "selection": [brief(r) for r in sel_results],
         "chosen": brief(chosen) if chosen else None,
         "holdout": [brief(r) for r in hold_results],
@@ -139,6 +141,21 @@ def run_study(df: pd.DataFrame, clock, base: BacktestConfig, barrier: str = "dai
         "_df": df, "_mask": mask, "_config": cfg, "_features": features,
         "_final_mask": final_mask,
     }
+
+
+def _event_row_metrics(df: pd.DataFrame, preds: pd.DataFrame, mask: pd.Series, kinds) -> dict | None:
+    """Out-of-sample AUC on decisions that had material news since the last close (where news should matter)."""
+    if "ev_material_since_close" not in df:
+        return None
+    rows = preds.index
+    ok = mask.loc[rows].to_numpy() & (df.loc[rows, "ev_material_since_close"].to_numpy() > 0)
+    out = {"rows": int(ok.sum())}
+    for side in walkforward.SIDES:
+        y = df.loc[rows, f"t_{side}"].to_numpy(dtype=float)[ok]
+        for m in [*kinds, "ensemble"]:
+            col = f"p_{side}" if m == "ensemble" else f"p_{side}_{m}"
+            out[f"{side}/{m}"] = walkforward.fold_metrics(y, preds[col].to_numpy()[ok]).get("auc")
+    return out
 
 
 def trained_until(study: dict):

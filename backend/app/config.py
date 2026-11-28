@@ -78,6 +78,7 @@ class Settings(BaseSettings):
     retention_5minute_days: int = Field(730, ge=1)
     retention_15minute_days: int = Field(730, ge=1)
     retention_day_days: int = Field(1095, ge=1)
+    nse_rate_per_sec: float = Field(1.0, gt=0, le=2)   # nseindia.com has no official API: stay polite
 
     # Risk defaults (overridable later from the dashboard)
     capital: float = Field(100_000, gt=0)
