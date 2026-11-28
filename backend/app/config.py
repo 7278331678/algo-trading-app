@@ -54,6 +54,9 @@ class Settings(BaseSettings):
     s3_secret_key: SecretStr | None = None
     aws_region: str = "ap-south-1"
 
+    # Experiment tracking (in-cluster MLflow locally; unset = tracking off)
+    mlflow_tracking_uri: str | None = None
+
     # LLM
     ollama_url: str = "http://host.docker.internal:11434"
     ollama_model: str = "llama3.1:8b"

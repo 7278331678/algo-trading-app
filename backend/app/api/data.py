@@ -128,7 +128,8 @@ def model_runs(limit: int = Query(10, le=100)) -> dict:
 
     with get_engine().connect() as conn:
         rows = conn.execute(text(
-            "SELECT id, run_id, created_at, barrier, verdict, status, chosen, chosen_on_holdout,"
+            "SELECT id, run_id, created_at, barrier, verdict, status, status_reason, trained_until, spec,"
+            " mlflow_run_id, chosen, chosen_on_holdout,"
             " summary->'base_win_rate_after_costs' AS base_win_rate_after_costs,"
             " summary->'holdout_quarters' AS holdout_quarters"
             " FROM model_runs ORDER BY created_at DESC LIMIT :l"), {"l": limit}).mappings().all()
@@ -145,3 +146,29 @@ def model_run_detail(run_pk: int) -> dict:
     if not row:
         raise HTTPException(404, "model run not found")
     return dict(row)
+
+
+@router.get("/models/{run_pk}/evals")
+def model_run_evals(run_pk: int, limit: int = Query(20, le=200)) -> dict:
+    """Forward (unseen-day) results recorded by the weekly retrain for a shadow or champion model."""
+    from sqlalchemy import text
+
+    with get_engine().connect() as conn:
+        rows = conn.execute(text(
+            "SELECT evaluated_at, from_day, to_day, trading_days, summary FROM model_evals"
+            " WHERE model_run_id = :i ORDER BY evaluated_at DESC LIMIT :l"), {"i": run_pk, "l": limit}).mappings().all()
+    return {"count": len(rows), "evals": [dict(r) for r in rows]}
+
+
+@router.get("/champion")
+def champion() -> dict:
+    """The only model a later phase may trade with. None is a valid, safe answer."""
+    from sqlalchemy import text
+
+    with get_engine().connect() as conn:
+        row = conn.execute(text(
+            "SELECT id, run_id, barrier, spec, chosen, trained_until, status_reason, status_changed_at"
+            " FROM model_runs WHERE status = 'champion' ORDER BY status_changed_at DESC LIMIT 1")).mappings().first()
+        shadows = conn.execute(text("SELECT count(*) FROM model_runs WHERE status = 'shadow'")).scalar()
+    return {"champion": dict(row) if row else None, "shadows": shadows,
+            "note": None if row else "no champion: models are not allowed to trade"}

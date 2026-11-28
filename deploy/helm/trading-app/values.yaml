@@ -87,6 +87,19 @@ jobs:
     deadlineSeconds: 21600
     memory: 8Gi
     cpu: 4
+  weekly-retrain:          # Saturday: review shadow/champion on unseen days, then train this week's candidate
+    schedule: "0 10 * * 6"
+    args: ["weekly-retrain", "--decision-times", "09:45", "--barrier", "daily_0.6x1.2"]
+    deadlineSeconds: 21600
+    memory: 8Gi
+    cpu: 4
+  signal-check:            # template only: run-job.bat signal-check
+    schedule: "0 0 1 1 *"
+    suspend: true
+    args: ["signal-check", "--decision-times", "09:45"]
+    deadlineSeconds: 21600
+    memory: 8Gi
+    cpu: 4
   backfill:                # template only: started by backfill.bat
     schedule: "0 0 1 1 *"
     suspend: true

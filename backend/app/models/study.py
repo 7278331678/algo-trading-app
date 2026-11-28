@@ -47,32 +47,45 @@ def _bt(frame: pd.DataFrame, cfg: BacktestConfig, model: str, thr: float) -> dic
     return {"model": model, "threshold": thr, "summary": s, "trades": res.trades, "daily": res.daily}
 
 
-def run_study(df: pd.DataFrame, clock, base: BacktestConfig, barrier: str = "daily_0.4x0.6",
-              cost: dataset.CostModel | None = None, kinds: tuple[str, ...] = ("hgb", "logit"),
-              thresholds: list[float] | None = None, max_train_rows: int = 600_000,
-              decision_times: list | None = None) -> dict:
-    """decision_times: if given (e.g. [time(9, 45)]), models train and trade only on candles closing at
-    those times: one decision per stock per day instead of one per 5-minute candle."""
-    cost = cost or dataset.CostModel()
-    thresholds = thresholds or THRESHOLDS
+def prepare(df: pd.DataFrame, clock, barrier: str, cost: dataset.CostModel) -> pd.DataFrame:
+    """Exit times, labels for `barrier` and cost-aware targets. Returns a new frame."""
     df = runner.add_exit_times(df, clock)
     dataset.relabel(df, barrier)
     dataset.add_targets(df, cost)
+    return df
+
+
+def run_study(df: pd.DataFrame, clock, base: BacktestConfig, barrier: str = "daily_0.4x0.6",
+              cost: dataset.CostModel | None = None, kinds: tuple[str, ...] = ("hgb", "logit"),
+              thresholds: list[float] | None = None, max_train_rows: int = 600_000,
+              decision_times: list | None = None, features: list[str] | None = None,
+              prepared: bool = False) -> dict:
+    """decision_times: if given (e.g. [time(9, 45)]), models train and trade only on candles closing at
+    those times: one decision per stock per day instead of one per 5-minute candle.
+    prepared: df already went through prepare() with this barrier and cost (lets callers reuse it).
+    features: model inputs (default: build.ALL_FEATURES)."""
+    cost = cost or dataset.CostModel()
+    thresholds = thresholds or THRESHOLDS
+    features = features or build.ALL_FEATURES
+    if not prepared:
+        df = prepare(df, clock, barrier, cost)
     mask = dataset.trainable(df)
     log.info("dataset: %d rows, %d trainable, long win rate after costs %.3f", len(df), int(mask.sum()),
              float(df.loc[mask, "t_long"].mean()))
 
+    final_mask = mask
     if decision_times:
         at = df["decision_time"].dt.time.isin(set(decision_times))
+        final_mask = mask & at   # the model used live must be trained on the same kind of rows
         sub = df[at]
-        preds, fold_metrics = walkforward.run_walkforward(sub, build.ALL_FEATURES, mask[at], kinds, max_train_rows,
+        preds, fold_metrics = walkforward.run_walkforward(sub, features, mask[at], kinds, max_train_rows,
                                                           min_train_rows=300)
         # backtests need every candle of the test quarters (to manage trades); predictions only at decision times
         pq = set(pd.PeriodIndex(pd.to_datetime(df.loc[preds.index, "day"]), freq="Q"))
         in_test = pd.PeriodIndex(pd.to_datetime(df["day"]), freq="Q").isin(pq)
         test = df[in_test].join(preds)
     else:
-        preds, fold_metrics = walkforward.run_walkforward(df, build.ALL_FEATURES, mask, kinds, max_train_rows)
+        preds, fold_metrics = walkforward.run_walkforward(df, features, mask, kinds, max_train_rows)
         test = df.loc[preds.index].join(preds)
     test["bad_day"] = regime.bad_day_flag(test)
     # backtests only need these columns (avoids copying ~60 columns x millions of rows per run)
@@ -123,13 +136,21 @@ def run_study(df: pd.DataFrame, clock, base: BacktestConfig, barrier: str = "dai
         "verdict": verdict,
         "_frames": {"predictions": test.loc[test[preds.columns[0]].notna(), ["symbol", "ts", *preds.columns]],
                     "chosen_holdout": chosen_hold},
-        "_df": df, "_mask": mask, "_config": cfg,
+        "_df": df, "_mask": mask, "_config": cfg, "_features": features,
+        "_final_mask": final_mask,
     }
 
 
-def save(engine, put_bytes, run_id: str, study: dict, final_models: dict, kinds) -> int:
+def trained_until(study: dict):
+    """Last trading day the final models saw. Forward (shadow) evaluation starts after it."""
+    df, m = study["_df"], study["_final_mask"]
+    return max(df.loc[m, "day"])
+
+
+def save(engine, put_bytes, run_id: str, study: dict, final_models: dict, kinds, spec: dict | None = None) -> int:
     from sqlalchemy import text
 
+    spec = spec or {}
     prefix = f"models/{run_id}"
     buf = io.BytesIO()
     study["_frames"]["predictions"].to_parquet(buf, index=False)
@@ -139,17 +160,22 @@ def save(engine, put_bytes, run_id: str, study: dict, final_models: dict, kinds)
         joblib.dump(model, b)
         put_bytes(f"{prefix}/{name}.joblib", b.getvalue())
     public = {k: v for k, v in study.items() if not k.startswith("_")}
-    manifest = {"run_id": run_id, "features": build.ALL_FEATURES, "feature_version": build.FEATURE_VERSION,
+    until = trained_until(study)
+    manifest = {"run_id": run_id, "features": study.get("_features", build.ALL_FEATURES),
+                "feature_version": build.FEATURE_VERSION, "spec": spec, "trained_until": str(until),
                 "code_hash": code_hash(), "models": sorted(final_models), "kinds": list(kinds),
                 "backtest_config": {k: str(v) for k, v in asdict(study["_config"]).items()}, **public}
     put_bytes(f"{prefix}/manifest.json", json.dumps(manifest, indent=2, default=str).encode())
     with engine.begin() as conn:
         return conn.execute(text(
-            "INSERT INTO model_runs (run_id, barrier, verdict, chosen, chosen_on_holdout, summary, artifacts)"
-            " VALUES (:r, :b, :v, CAST(:c AS jsonb), CAST(:h AS jsonb), CAST(:s AS jsonb), :a) RETURNING id"),
+            "INSERT INTO model_runs (run_id, barrier, verdict, chosen, chosen_on_holdout, summary, artifacts,"
+            " spec, trained_until)"
+            " VALUES (:r, :b, :v, CAST(:c AS jsonb), CAST(:h AS jsonb), CAST(:s AS jsonb), :a,"
+            " CAST(:sp AS jsonb), :tu) RETURNING id"),
             {"r": run_id, "b": study["barrier"], "v": study["verdict"],
              "c": json.dumps(study["chosen"], default=str), "h": json.dumps(study["chosen_on_holdout"], default=str),
-             "s": json.dumps(public, default=str), "a": prefix}).scalar_one()
+             "s": json.dumps(public, default=str), "a": prefix, "sp": json.dumps(spec, default=str),
+             "tu": until}).scalar_one()
 
 
 def nan_to_none(x):

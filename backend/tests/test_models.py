@@ -12,7 +12,7 @@ from app.features import build
 from app.models import dataset, regime, study, walkforward
 
 
-def synthetic_market(n_sym=6, start="2025-01-01", days=330, seed=5):
+def synthetic_market(n_sym=6, start="2025-01-01", days=330, seed=5, drift=0.0012):
     """Days with a hidden trend: after 09:30 the stock drifts up or down, and `or_breakout`
     (known from 09:30) reveals the direction 70% of the time. Other features are noise."""
     rng = np.random.default_rng(seed)
@@ -26,8 +26,8 @@ def synthetic_market(n_sym=6, start="2025-01-01", days=330, seed=5):
             hint = trend if rng.random() < 0.7 else -trend
             t0 = d + pd.Timedelta(hours=9, minutes=15)
             n = 72  # auction stock: last candle 15:10
-            drift = np.where(np.arange(n) >= 3, trend * 0.0012, 0.0)
-            r = drift + rng.normal(0, 0.0012, n)
+            drift_ = np.where(np.arange(n) >= 3, trend * drift, 0.0)
+            r = drift_ + rng.normal(0, 0.0012, n)
             c = price * np.exp(np.cumsum(r))
             o = np.r_[price, c[:-1]]
             ts = pd.date_range(t0, periods=n, freq="5min", tz="Asia/Kolkata")

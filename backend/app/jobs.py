@@ -9,6 +9,8 @@
   build-features  indicators, market context and labels for every stock -> Parquet (after daily-update)
   backtest        run strategies x stop/target settings on the features, save results
   train-models    walk-forward models, threshold chosen on early quarters, judged on later ones
+  weekly-retrain  score shadow/champion models on unseen days, promote/retire, train a new candidate
+  signal-check    plant a known edge in the real data and confirm the pipeline finds it (and ignores noise)
 
 Exit codes: 0 ok/skipped, 1 failed, 2 Zerodha login needed, 3 another run is in progress.
 """
@@ -262,14 +264,22 @@ def main(argv: list[str] | None = None) -> int:
     bt.add_argument("--end", type=date.fromisoformat, default=None)
     bt.add_argument("--symbols", nargs="+", default=None)
     bt.add_argument("--slippage-bps", type=float, default=5.0)
-    tm = sub.add_parser("train-models")
-    tm.add_argument("--barrier", default="daily_0.4x0.6", choices=["daily_0.4x0.6", "daily_0.6x1.2", "atr5_1.0x1.5"])
-    tm.add_argument("--decision-times", nargs="+", default=None,
-                    help="HH:MM candle-close times to decide at, e.g. 09:45 (default: every candle)")
-    tm.add_argument("--slippage-bps", type=float, default=3.0, help="per side, also used in the cost-aware target")
-    tm.add_argument("--models", nargs="+", default=["hgb", "logit"], choices=["hgb", "logit"])
-    tm.add_argument("--max-train-rows", type=int, default=600_000)
-    tm.add_argument("--symbols", nargs="+", default=None)
+    def model_args(sp, default_barrier="daily_0.4x0.6"):
+        sp.add_argument("--barrier", default=default_barrier,
+                        choices=["daily_0.4x0.6", "daily_0.6x1.2", "atr5_1.0x1.5"])
+        sp.add_argument("--decision-times", nargs="+", default=None,
+                        help="HH:MM candle-close times to decide at, e.g. 09:45 (default: every candle)")
+        sp.add_argument("--slippage-bps", type=float, default=3.0, help="per side, also used in the cost-aware target")
+        sp.add_argument("--models", nargs="+", default=["hgb", "logit"], choices=["hgb", "logit"])
+        sp.add_argument("--max-train-rows", type=int, default=600_000)
+        sp.add_argument("--symbols", nargs="+", default=None)
+
+    model_args(sub.add_parser("train-models"))
+    model_args(sub.add_parser("weekly-retrain", help="review shadows/champion on unseen days, then train a candidate"),
+               default_barrier="daily_0.6x1.2")
+    sc = sub.add_parser("signal-check", help="plant a known edge in the real data and check the pipeline finds it")
+    model_args(sc, default_barrier="daily_0.6x1.2")
+    sc.add_argument("--strengths", nargs="+", type=float, default=None)
     args = p.parse_args(argv)
     clock = MarketClock()
 
@@ -352,9 +362,11 @@ def main(argv: list[str] | None = None) -> int:
                                               "profit_factor", "win_rate", "max_drawdown_pct",
                                               "profitable_quarters", "would_halt_on")} for r in results}}
 
-    def train_models(settings, engine, run):
+    def model_setup(settings):
+        from datetime import time as dtime
+
         from app.backtest.engine import BacktestConfig
-        from app.models import dataset, study, walkforward
+        from app.models import dataset
         from app.providers.storage import ObjectStore
 
         store_ = ObjectStore(settings)
@@ -363,25 +375,65 @@ def main(argv: list[str] | None = None) -> int:
                               max_trades_per_day=settings.max_trades_per_day,
                               daily_loss_cap_pct=settings.daily_loss_cap_pct)
         cost = dataset.CostModel(slippage_bps_per_side=args.slippage_bps)
-        kinds = tuple(args.models)
-        from datetime import time as dtime
-
         dts = [dtime.fromisoformat(t) for t in args.decision_times] if args.decision_times else None
-        result = study.run_study(df, clock, base, args.barrier, cost, kinds, max_train_rows=args.max_train_rows,
-                                 decision_times=dts)
-        final = walkforward.fit_final(result["_df"], study.build.ALL_FEATURES, result["_mask"], kinds,
-                                      args.max_train_rows)
+        spec = {"barrier": args.barrier, "decision_times": [t.strftime("%H:%M") for t in dts] if dts else None,
+                "slippage_bps": args.slippage_bps, "kinds": list(args.models), "max_train_rows": args.max_train_rows,
+                "symbols": args.symbols}
+        return store_, df, base, cost, dts, spec
+
+    def train_and_save(settings, engine, store_, df, base, cost, dts, spec) -> dict:
+        from app.models import study, tracking, walkforward
+
+        kinds = tuple(spec["kinds"])
+        result = study.run_study(df, clock, base, spec["barrier"], cost, kinds,
+                                 max_train_rows=spec["max_train_rows"], decision_times=dts)
+        final = walkforward.fit_final(result["_df"], result["_features"], result["_final_mask"], kinds,
+                                      spec["max_train_rows"])
         run_id = clock.now().strftime("%Y%m%d-%H%M%S")
-        pk = study.save(engine, store_.put_bytes, run_id, result, final, kinds)
-        run.stats = {"model_run_id": pk, "run_id": run_id, "verdict": result["verdict"],
-                     "base_win_rate_after_costs": result["base_win_rate_after_costs"],
-                     "chosen": result["chosen"], "chosen_on_holdout": result["chosen_on_holdout"],
-                     "auc_ensemble": {m["quarter"] + "/" + m["side"]: m["auc"] for m in result["fold_metrics"]
-                                      if m["model"] == "ensemble"}}
+        pk = study.save(engine, store_.put_bytes, run_id, result, final, kinds, spec)
+        mlflow_id = tracking.log_training_run(settings.mlflow_tracking_uri, run_id, spec, result,
+                                              {"model_run_id": pk})
+        if mlflow_id:
+            from sqlalchemy import text
+
+            with engine.begin() as conn:
+                conn.execute(text("UPDATE model_runs SET mlflow_run_id = :m WHERE id = :i"), {"m": mlflow_id, "i": pk})
+        return {"model_run_id": pk, "run_id": run_id, "mlflow_run_id": mlflow_id, "verdict": result["verdict"],
+                "trained_until": str(study.trained_until(result)),
+                "base_win_rate_after_costs": result["base_win_rate_after_costs"],
+                "chosen": result["chosen"], "chosen_on_holdout": result["chosen_on_holdout"],
+                "auc_ensemble": {m["quarter"] + "/" + m["side"]: m["auc"] for m in result["fold_metrics"]
+                                 if m["model"] == "ensemble"}}
+
+    def train_models(settings, engine, run):
+        store_, df, base, cost, dts, spec = model_setup(settings)
+        run.stats = train_and_save(settings, engine, store_, df, base, cost, dts, spec)
+
+    def weekly_retrain(settings, engine, run):
+        from app.models import registry
+
+        store_, df, base, cost, dts, spec = model_setup(settings)
+        run.stats["review"] = registry.weekly_review(engine, store_.get_bytes, df, clock, base)
+        run.stats["candidate"] = train_and_save(settings, engine, store_, df, base, cost, dts, spec)
+        status, why = registry.register_candidate(engine, run.stats["candidate"]["model_run_id"],
+                                                  run.stats["candidate"]["verdict"])
+        run.stats["candidate"]["status"] = status
+        run.stats["candidate"]["status_reason"] = why
+
+    def signal_check(settings, engine, run):
+        from app.models import signal_check as sc
+
+        _, df, base, cost, dts, spec = model_setup(settings)
+        res = sc.run(df, clock, base, spec["barrier"], cost, tuple(spec["kinds"]), dts,
+                     strengths=tuple(args.strengths) if args.strengths else sc.DEFAULT_STRENGTHS,
+                     max_train_rows=spec["max_train_rows"])
+        run.stats = {"spec": spec, **res}
+        return "ok" if res["passed"] else "failed_check"
 
     handlers = {"universe-sync": universe_sync, "backfill": backfill, "daily-update": daily_update,
                 "purge": purge, "quality-check": quality_check, "build-features": build_features,
-                "backtest": backtest, "train-models": train_models}
+                "backtest": backtest, "train-models": train_models, "weekly-retrain": weekly_retrain,
+                "signal-check": signal_check}
     return _run(args.cmd, handlers[args.cmd])
 
 

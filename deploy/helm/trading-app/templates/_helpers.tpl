@@ -29,4 +29,7 @@ env:
   - { name: S3_BUCKET, value: {{ .Values.minio.bucket | quote }} }
   - { name: SMTP_HOST, value: "mailhog" }
   - { name: SMTP_PORT, value: "1025" }
+  {{- if .Values.mlflow.enabled }}
+  - { name: MLFLOW_TRACKING_URI, value: "http://mlflow:5000" }
+  {{- end }}
 {{- end -}}

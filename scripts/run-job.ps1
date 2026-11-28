@@ -18,7 +18,10 @@ if (-not $cj) { Write-Host "No job template named '$cron'. Run start-local.bat t
 $name = ($cron + "-" + (Get-Date -Format "MMdd-HHmmss")).ToLower()
 $spec = $cj.spec.jobTemplate.spec
 $base = @($spec.template.spec.containers[0].args)
-$spec.template.spec.containers[0].args = @($base[0]) + $extra
+# no extra arguments: keep the template's own (e.g. signal-check's --decision-times 09:45);
+# extra arguments: they replace everything after the command name
+if ($extra.Count -gt 0) { $spec.template.spec.containers[0].args = @($base[0]) + $extra }
+$shown = @($spec.template.spec.containers[0].args)
 $job = [ordered]@{
     apiVersion = "batch/v1"; kind = "Job"
     metadata = @{ name = $name; namespace = $Namespace; labels = @{ "app.kubernetes.io/part-of" = "trading-app" } }
@@ -31,7 +34,18 @@ $rc = $LASTEXITCODE
 Remove-Item $tmp -ErrorAction SilentlyContinue
 if ($rc -ne 0) { Write-Host "could not create the job" -ForegroundColor Red; exit 1 }
 
-Write-Host "`nJob $name started: python -m app.jobs $($base[0]) $($extra -join ' ')" -ForegroundColor Cyan
+Write-Host "`nJob $name started: python -m app.jobs $($shown -join ' ')" -ForegroundColor Cyan
+Write-Host "Waiting for its container to start..."
+$phase = ""
+for ($i = 0; $i -lt 150; $i++) {   # up to 5 minutes
+    $phase = kubectl -n $Namespace get pods -l job-name=$name -o jsonpath="{.items[0].status.phase}" 2>$null
+    if ($phase -and $phase -ne "Pending") { break }
+    Start-Sleep -Seconds 2
+}
+if (-not $phase -or $phase -eq "Pending") {
+    Write-Host "Still not started after 5 minutes. Check with: kubectl -n $Namespace describe pod -l job-name=$name" -ForegroundColor Yellow
+    exit 1
+}
 Write-Host "Showing its log (Ctrl+C stops watching, not the job)...`n"
-kubectl -n $Namespace wait --for=condition=ready pod -l job-name=$name --timeout=300s | Out-Null
 kubectl -n $Namespace logs -f job/$name
+Write-Host "`nTo see the end again later: kubectl -n $Namespace logs job/$name --tail=3"
